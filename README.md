@@ -3,17 +3,25 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/mahmoudalrefaey/AraSpellX/stargazers"><img src="https://img.shields.io/github/stars/mahmoudalrefaey/AraSpellX?style=for-the-badge&logo=github&label=Stars" alt="GitHub stars"></a>
-  <a href="https://github.com/mahmoudalrefaey/AraSpellX"><img src="https://img.shields.io/github/license/mahmoudalrefaey/AraSpellX?style=for-the-badge&label=License" alt="License"></a>
-  <a href="https://github.com/mahmoudalrefaey/AraSpellX"><img src="https://img.shields.io/github/languages/top/mahmoudalrefaey/AraSpellX?style=for-the-badge&label=Python" alt="Python"></a>
-  <a href="https://arxiv.org/abs/2405.06981"><img src="https://img.shields.io/badge/Paper-AraSpell-8b5cf6?style=for-the-badge&logo=arxiv" alt="AraSpell paper"></a>
+  <a href="https://github.com/mahmoudalrefaey/AraSpellX/stargazers">
+    <img src="https://img.shields.io/github/stars/mahmoudalrefaey/AraSpellX?style=for-the-badge&logo=github&label=Stars" alt="GitHub stars">
+  </a>
+  <a href="https://github.com/mahmoudalrefaey/AraSpellX">
+    <img src="https://img.shields.io/github/license/mahmoudalrefaey/AraSpellX?style=for-the-badge&label=License" alt="License">
+  </a>
+  <a href="https://github.com/mahmoudalrefaey/AraSpellX">
+    <img src="https://img.shields.io/github/languages/top/mahmoudalrefaey/AraSpellX?style=for-the-badge&label=Python" alt="Python">
+  </a>
+  <a href="https://arxiv.org/abs/2405.06981">
+    <img src="https://img.shields.io/badge/Paper-AraSpell-8b5cf6?style=for-the-badge&logo=arxiv" alt="AraSpell paper">
+  </a>
 </p>
 
 <h1 align="center">AraSpellX</h1>
 
 <p align="center">
-  <strong>Arabic spelling correction with sequence-to-sequence deep learning</strong><br>
-  A clean implementation inspired by the AraSpell research framework.
+  <strong>Arabic spelling correction with Transformer-based sequence-to-sequence learning</strong><br>
+  An independent Transformer implementation inspired by the AraSpell research work.
 </p>
 
 <p align="center">
@@ -63,19 +71,20 @@ The goal is not simply to find a word in a dictionary. The model learns a mappin
 
 ## Architecture
 
+AraSpellX focuses exclusively on the **Transformer-based sequence-to-sequence architecture**.
+
+The original AraSpell project also includes RNN-based architectures, but those architectures are **not implemented or supported in AraSpellX**. They are mentioned only as part of the original research context.
+
 ```mermaid
 flowchart LR
     A["Clean Arabic text"] --> B["Error Injection"]
     B --> C["Noisy Arabic text"]
     C --> D["Tokenizer"]
-    D --> E["Seq2Seq Encoder"]
-    E --> F["Attention / Transformer"]
-    F --> G["Decoder"]
-    G --> H["Corrected Arabic text"]
-    H --> I["CER / WER"]
+    D --> E["Transformer Encoder"]
+    E --> F["Transformer Decoder"]
+    F --> G["Corrected Arabic text"]
+    G --> H["CER / WER"]
 ```
-
-The original AraSpell repository implements three architecture families: attentional vanilla RNN Seq2Seq, stacked RNN Seq2Seq, and Transformer.
 
 ---
 
@@ -262,9 +271,9 @@ flowchart LR
 
 ### Reference benchmark
 
-The table below reproduces selected results reported by the **original AraSpell repository**.
+The table below contains selected results reported by the **original AraSpell research project**.
 
-These are **not AraSpellX results**.
+These are **reference results from AraSpell, not AraSpellX results**.
 
 | Model | CER @ 5% | CER @ 10% | WER @ 5% | WER @ 10% |
 |---|---:|---:|---:|---:|
@@ -272,9 +281,10 @@ These are **not AraSpellX results**.
 | Transformer 0.1 | 1.45% | 2.82% | 5.95% | 10.36% |
 | Transformer mixed | 1.11% | 2.80% | 4.80% | 10.65% |
 | Transformer varied | 1.22% | 3.16% | 5.41% | 12.35% |
-| RNNB 0.05 | 1.74% | 4.45% | 7.76% | 18.80% |
-| RNNB 0.1 | 1.86% | 4.01% | 7.80% | 15.41% |
-| Vanilla RNN 0.05 | 1.89% | 4.99% | 8.33% | 20.67% |
+
+### AraSpellX benchmark
+
+AraSpellX results will be added after the Transformer implementation and training pipeline are fully validated.
 
 ### AraSpellX benchmark
 
@@ -315,9 +325,9 @@ https://github.com/msalhab96/AraSpell
 
 ## Attribution
 
-AraSpellX is a separate implementation inspired by the AraSpell research work and, where applicable, based on source code released under the MIT License.
+AraSpellX is an independent implementation focused on the **Transformer architecture** described in the AraSpell research work.
 
-Original project:
+The project was developed with reference to:
 
 **AraSpell — Arabic Spelling Correction**  
 https://github.com/msalhab96/AraSpell
@@ -327,9 +337,7 @@ Original authors:
 - Mahmoud Salhab
 - Faisal Abu-Khzam
 
-The original repository is licensed under the MIT License.
-
-If substantial portions of the original implementation are retained, the original copyright and MIT license notice must remain with those portions.
+The original AraSpell source code is licensed under the MIT License. Where applicable, original copyright and license notices are retained for substantial portions of reused source code.
 
 ---
 
