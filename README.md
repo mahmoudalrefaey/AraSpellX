@@ -3,12 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/mahmoudalrefaey/AraSpellX/stargazers">
-    <img src="https://img.shields.io/github/stars/mahmoudalrefaey/AraSpellX?style=for-the-badge&logo=github&label=Stars" alt="GitHub stars">
-  </a>
-  <a href="https://github.com/mahmoudalrefaey/AraSpellX">
-    <img src="https://img.shields.io/github/languages/top/mahmoudalrefaey/AraSpellX?style=for-the-badge&label=Python 3.10" alt="Python">
-  </a>
+<img src="https://img.shields.io/badge/Python-3.10-blue?style=for-the-badge" alt="Python 3.10">
   <a href="https://arxiv.org/abs/2405.06981">
     <img src="https://img.shields.io/badge/Paper-AraSpell-8b5cf6?style=for-the-badge&logo=arxiv" alt="AraSpell paper">
   </a>
