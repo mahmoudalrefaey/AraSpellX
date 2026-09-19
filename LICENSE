@@ -2,6 +2,18 @@ MIT License
 
 Copyright (c) 2026 Mahmoud Al-Refaey
 
+This project includes implementation work based on and/or derived from
+the AraSpell project:
+
+https://github.com/msalhab96/AraSpell
+
+Original AraSpell source code:
+Copyright (c) 2022 Mahmoud Salhab
+
+The original AraSpell source code is licensed under the MIT License.
+The original copyright notice and license terms are retained where
+applicable to substantial portions of the original software.
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

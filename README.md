@@ -7,14 +7,16 @@
     <img src="https://img.shields.io/github/stars/mahmoudalrefaey/AraSpellX?style=for-the-badge&logo=github&label=Stars" alt="GitHub stars">
   </a>
   <a href="https://github.com/mahmoudalrefaey/AraSpellX">
-    <img src="https://img.shields.io/github/license/mahmoudalrefaey/AraSpellX?style=for-the-badge&label=License" alt="License">
-  </a>
-  <a href="https://github.com/mahmoudalrefaey/AraSpellX">
-    <img src="https://img.shields.io/github/languages/top/mahmoudalrefaey/AraSpellX?style=for-the-badge&label=Python" alt="Python">
+    <img src="https://img.shields.io/github/languages/top/mahmoudalrefaey/AraSpellX?style=for-the-badge&label=Python 3.10" alt="Python">
   </a>
   <a href="https://arxiv.org/abs/2405.06981">
     <img src="https://img.shields.io/badge/Paper-AraSpell-8b5cf6?style=for-the-badge&logo=arxiv" alt="AraSpell paper">
   </a>
+  <a href="https://huggingface.co/">
+  <img src="https://img.shields.io/badge/Hugging%20Face-Model-yellow?style=for-the-badge" alt="Hugging Face">
+  </a>
+  <img src="https://img.shields.io/badge/Architecture-Transformer-purple?style=for-the-badge" alt="Transformer">
+
 </p>
 
 <h1 align="center">AraSpellX</h1>
@@ -285,10 +287,6 @@ These are **reference results from AraSpell, not AraSpellX results**.
 ### AraSpellX benchmark
 
 AraSpellX results will be added after the Transformer implementation and training pipeline are fully validated.
-
-### AraSpellX benchmark
-
-Results will be added here after the current implementation and training pipeline are fully validated.
 
 ---
 
