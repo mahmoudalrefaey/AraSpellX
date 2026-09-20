@@ -26,6 +26,10 @@ class AdamWarmup:
         self.counter = 0
         self._update_lr()
 
+    @property
+    def param_groups(self):
+        return self.optimizer.param_groups
+
     def get_lr(self, step: int) -> float:
         return self.peak * min(
             1 / math.sqrt(step),
@@ -48,7 +52,7 @@ class AdamWarmup:
     def state_dict(self):
         return self.optimizer.state_dict()
 
-    def load_state_dict(self, state_dict, counter) -> None:
+    def load_state_dict(self, state_dict, counter=0) -> None:
         self.optimizer.load_state_dict(state_dict)
         self.counter = counter
 
@@ -79,6 +83,10 @@ class AdamExpDecay:
         self.decay_rate = decay_rate
         self.counter = 0
 
+    @property
+    def param_groups(self):
+        return self.optimizer.param_groups
+
     def get_lr(self, step: int) -> float:
         return self.lr * (1 - (self.decay_rate/100)) ** step
 
@@ -98,7 +106,7 @@ class AdamExpDecay:
     def state_dict(self):
         return self.optimizer.state_dict()
 
-    def load_state_dict(self, state_dict, counter) -> None:
+    def load_state_dict(self, state_dict, counter=0) -> None:
         self.optimizer.load_state_dict(state_dict)
         self.counter = counter
 

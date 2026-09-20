@@ -14,6 +14,7 @@ import torch
 import os
 from core.utils import load_state
 import torch.nn as nn
+from torch.cuda.amp import GradScaler, autocast
 
 
 class DistTrainer:
@@ -36,7 +37,9 @@ class DistTrainer:
             rank: int = 0,
             clip_grad: bool = False,
             grad_norm=None,
-            ckpt=None
+            ckpt=None,
+            mixed_precision: bool = False,
+            grad_accum_steps: int = 1
             ) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError('CUDA is required for training, but CUDA is not available on this machine.')
@@ -60,6 +63,9 @@ class DistTrainer:
         self.history = dict()
         self.grad_norm = grad_norm
         self.clip_grad = clip_grad
+        self.mixed_precision = mixed_precision
+        self.scaler = GradScaler() if mixed_precision else None
+        self.grad_accum_steps = max(1, grad_accum_steps)
 
     def _set_state(self, ckpt_path):
         model, optimizer, epoch, steps = load_state(ckpt_path)
@@ -96,7 +102,8 @@ class DistTrainer:
             'model': self.model.state_dict(),
             'epoch': epoch,
             'optimizer': self.optimizer.state_dict(),
-            'steps': self.optimizer.counter
+            'steps': self.optimizer.counter,
+            'scaler': self.scaler.state_dict() if self.scaler else None
         }
 
     def save_ckpt(self, epoch: int) -> None:
@@ -113,7 +120,6 @@ class DistTrainer:
                 self.history[self._test_loss_key][-1]
                 )
             if epoch == -1:
-                # When the model just loadded and no trainin introduced
                 return
             if save_ckpt is True:
                 self.save_ckpt(epoch)
@@ -123,7 +129,6 @@ class DistTrainer:
                 exit()
 
     def fit(self, *args, **kwargs):
-        # test the model before training
         self.test_and_log(-1)
         for epoch in range(self.last_epoch, self.epochs):
             self.train()
@@ -136,11 +141,11 @@ class DistTrainer:
         for batch in tqdm(self.test_loader):
             self.__counter += 1
             (enc_inp, dec_inp, enc_mask, dec_mask) = batch
-            enc_inp = enc_inp.to(self.device)
-            dec_inp = dec_inp.to(self.device)
-            enc_mask = enc_mask.to(self.device)
-            dec_mask = dec_mask.to(self.device)
-            preds, att = self.model(enc_inp, dec_inp, enc_mask, dec_mask)
+            enc_inp = enc_inp.to(self.device, non_blocking=True)
+            dec_inp = dec_inp.to(self.device, non_blocking=True)
+            enc_mask = enc_mask.to(self.device, non_blocking=True)
+            dec_mask = dec_mask.to(self.device, non_blocking=True)
+            preds, att = self.model(enc_inp, dec_inp, enc_mask, dec_mask, need_weights=True)
             loss = self.criterion(preds, dec_inp, dec_mask)
             total_loss.append(loss.item())
         total_loss = sum(total_loss)
@@ -155,23 +160,45 @@ class DistTrainer:
     def train(self):
         total_loss = 0
         self.set_train_mode()
+        accum_step = 0
         for batch in tqdm(self.train_loader, total=len(self.train_loader)):
             (enc_inp, dec_inp, enc_mask, dec_mask) = batch
-            enc_inp = enc_inp.to(self.device)
-            dec_inp = dec_inp.to(self.device)
-            enc_mask = enc_mask.to(self.device)
-            dec_mask = dec_mask.to(self.device)
-            self.optimizer.zero_grad()
-            preds, att = self.model(enc_inp, dec_inp, enc_mask, dec_mask)
-            loss = self.criterion(preds, dec_inp, dec_mask)
-            loss.backward()
-            if self.clip_grad is True:
-                nn.utils.clip_grad_norm_(
-                    self.model.parameters(), max_norm=self.grad_norm
-                    )
-            self.optimizer.step()
-            self.logger.log_step(self._train_loss_key, loss.item())
-            total_loss += loss.item()
+            enc_inp = enc_inp.to(self.device, non_blocking=True)
+            dec_inp = dec_inp.to(self.device, non_blocking=True)
+            enc_mask = enc_mask.to(self.device, non_blocking=True)
+            dec_mask = dec_mask.to(self.device, non_blocking=True)
+            
+            if self.mixed_precision:
+                with autocast():
+                    preds, att = self.model(enc_inp, dec_inp, enc_mask, dec_mask, need_weights=False)
+                    loss = self.criterion(preds, dec_inp, dec_mask)
+                    loss = loss / self.grad_accum_steps
+                self.scaler.scale(loss).backward()
+            else:
+                preds, att = self.model(enc_inp, dec_inp, enc_mask, dec_mask, need_weights=False)
+                loss = self.criterion(preds, dec_inp, dec_mask)
+                loss = loss / self.grad_accum_steps
+                loss.backward()
+            
+            accum_step += 1
+            
+            if accum_step % self.grad_accum_steps == 0:
+                if self.mixed_precision:
+                    if self.clip_grad:
+                        self.scaler.unscale_(self.optimizer)
+                        nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_norm)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    if self.clip_grad:
+                        nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.grad_norm)
+                    self.optimizer.step()
+                self.optimizer.zero_grad()
+            
+            # Log the unscaled loss
+            log_loss = loss.item() * self.grad_accum_steps
+            self.logger.log_step(self._train_loss_key, log_loss)
+            total_loss += log_loss
         if self.rank == 0:
             total_loss /= len(self.train_loader)
             if self._train_loss_key in self.history:
@@ -207,7 +234,9 @@ def get_trainer(rank: int, args):
         rank=rank,
         ckpt=args.pre_trained_path,
         grad_norm=args.grad_norm,
-        clip_grad=args.clip_grad
+        clip_grad=args.clip_grad,
+        mixed_precision=getattr(args, 'mixed_precision', False),
+        grad_accum_steps=getattr(args, 'grad_accum_steps', 1)
     )
 
 

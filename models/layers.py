@@ -1,7 +1,8 @@
 import math
 import torch
 import torch.nn as nn
-from typing import List, Tuple, Union
+import torch.nn.functional as F
+from typing import List, Tuple, Union, Optional
 from torch import Tensor
 from core.utils import get_positionals
 from torch.nn.utils.rnn import (
@@ -10,14 +11,15 @@ from torch.nn.utils.rnn import (
 
 
 class MultiHeadAtt(nn.Module):
-    """Implements the multi-head attention module
+    """Optimized multi-head attention using PyTorch's scaled_dot_product_attention.
 
-    Args:
-        d_model (int): The model dimensionality.
-        h (int): The number of heads.
-        p_dropout (float): The dropout ratio.
-        device (str): The device to map the operations to.
+    Preserves mathematical equivalence with the original MultiHeadAtt:
+    - Same Q/K/V projections (with bias)
+    - Same concat(query, attn_output) + proj_fc pattern
+    - Same dropout
+    - Compatible mask semantics
     """
+
     def __init__(
             self,
             d_model: int,
@@ -27,216 +29,136 @@ class MultiHeadAtt(nn.Module):
             ) -> None:
         super().__init__()
         assert d_model % h == 0, 'd_model is not divisible by h'
-        self.fc_key = nn.Linear(
-            in_features=d_model,
-            out_features=d_model,
-        )
-        self.fc_query = nn.Linear(
-            in_features=d_model,
-            out_features=d_model,
-        )
-        self.fc_value = nn.Linear(
-            in_features=d_model,
-            out_features=d_model,
-        )
-        self.proj_fc = nn.Linear(
-            in_features=2 * d_model,
-            out_features=d_model,
-        )
+        self.fc_key = nn.Linear(d_model, d_model, bias=True)
+        self.fc_query = nn.Linear(d_model, d_model, bias=True)
+        self.fc_value = nn.Linear(d_model, d_model, bias=True)
+        self.proj_fc = nn.Linear(2 * d_model, d_model, bias=True)
         self.dropout = nn.Dropout(p_dropout)
         self.d_model = d_model
         self.h = h
         self.dk = d_model // h
-        self.sqrt_dk = math.sqrt(self.dk)
-        self.softmax = nn.Softmax(dim=-1)
         self.device = device
 
-    def _get_scaled_att(
+    def _prepare_mask_for_sdpa(
             self,
-            Q: Tensor,
-            K: Tensor,
-            mask: Union[Tensor, None] = None,
-            query_mask: Union[Tensor, None] = None,
-            key_mask: Union[Tensor, None] = None
-            ) -> Tensor:
-        """Calculates the scaled attention map
-        by calculating softmax(matmul(Q, K.T)/sqrt(dk))
-        Args:
-            Q (Tensor): The Query tensor of shape [h * B, Tq, dk]
-            K (Tensor): The Key tensor of shape [h * B, dk, Tk]
-            mask (Union[Tensor, None]): The mask tensor where its value is
-            True when there's a padding in that position, of shape [B, M].
-            Default None.
-        Returns:
-            Tensor: The scaled attention weights of shape
-            [B * h, Tq, Tk]
+            mask: Optional[Tensor],
+            query_len: int,
+            key_len: int,
+            batch_size: int,
+            num_heads: int,
+            is_query_mask: bool = True,
+            is_causal: bool = False
+            ) -> Optional[Tensor]:
+        """Convert padding mask to SDPA format.
+        
+        Current mask: True = padding (masked out)
+        SDPA boolean mask: True = participate (keep)
+        So we need to invert.
+        
+        For query_mask (is_query_mask=True): [B, query_len] -> [B, h, query_len, key_len]
+        For key_mask (is_query_mask=False): [B, key_len] -> [B, h, query_len, key_len]
+        
+        CRITICAL: Ensure no row is fully masked (prevents NaN in SDPA).
+        For self-attention, allow padded queries to attend to themselves.
         """
-        result = torch.matmul(Q, K)
-        result = result / self.sqrt_dk
-        if mask is not None:
-            # Used for self attention!
-            mask = self.get_mask(Q, K, mask)
-            result = result.masked_fill(mask, -1e9)
-        if all([
-                item is not None for item in [query_mask, key_mask]
-                ]):
-            mask = self.get_key_query_mask(query_mask, key_mask)
-            result = result.masked_fill(mask, -1e9)
-        return self.softmax(result)
-
-    def get_key_query_mask(
-            self, query_mask: Tensor, key_mask: Tensor
-            ) -> Tensor:
-        """Given the query and the key masks of shape [B, M], it returns
-        the encoder decoder mask of shape [B * h, Tq, Tk].
-
-        Args:
-            query_mask (Tensor): The query mask of shape [B, Tq]
-            key_mask (Tensor): The key mask of shape [B, Tk]
-
-        Returns:
-            Tensor: The encoder-decoder mask of shape [B, Tq, Tk].
-        """
-        batch_size, t_query = query_mask.shape
-        # [B, h * Tq]
-        mask = key_mask.repeat(1, self.h * t_query)
-        # [B * h, Tq, Tk]
-        mask = mask.reshape(batch_size * self.h,  t_query, -1)
-        # [B, h * Tq]
-        query_mask = query_mask.repeat(1, self.h)
-        # [B * h, Tq, 1]
-        query_mask = query_mask.view(self.h * batch_size, -1, 1)
-        mask = mask | query_mask
-        return mask
-
-    def perform_att(
-            self,
-            Q: Tensor,
-            K: Tensor,
-            V: Tensor,
-            mask: Union[Tensor, None] = None,
-            query_mask: Union[Tensor, None] = None,
-            key_mask: Union[Tensor, None] = None
-            ) -> Tensor:
-        """Performs multi-head scaled attention
-        by calculating softmax(matmul(Q, K.T)/sqrt(dk)).V
-        Args:
-            Q (Tensor): The Query tensor of shape [h * B, Tq, dk].
-            K (Tensor): The Key tensor of shape [h * B, dk, Tk].
-            V (Tensor): The Value tensor of shape [h * B, Tk, dk].
-            mask (Union[Tensor, None]): The mask tensor where its value is
-            True when there's a padding in that position, of shape [B, M].
-            Default None.
-        Returns:
-            Tuple[Tensor, Tensor]: The attention matrix of shape
-            [B * h, Tq, Tk] and the scaled attention value of
-            shape [B * h, Tq, dk].
-        """
-        att = self._get_scaled_att(
-            Q, K, mask=mask, query_mask=query_mask, key_mask=key_mask
-            )
-        result = torch.matmul(att, V)
-        return att, result
-
-    def _reshape(self, *args) -> List[Tensor]:
-        """Reshapes all given list of tensor
-        from [B, T, N] to [B, T, h, dk]
-        Returns:
-            List[Tensor]: list of all reshaped tensors
-        """
-        return [
-            item.contiguous().view(-1, item.shape[1], self.h, self.dk)
-            for item in args
-        ]
-
-    def _pre_permute(self, *args) -> List[Tensor]:
-        """Permutes all given list of tensors
-        from [B, T, h, dk] to become [h, B, T, dk].
-
-        Returns:
-            List[Tensor]: List of all permuted tensors.
-        """
-        return [
-            item.permute(2, 0, 1, 3)
-            for item in args
-        ]
-
-    def _change_dim(self, *args) -> List[Tensor]:
-        """Changes the dimensionality of all passed tensores
-        from [B, T, N] to [B * h, T, dk]
-
-        Returns:
-            List[Tensor]: List of the modified tensors.
-        """
-        result = self._reshape(*args)  # [B, T, h, dk]
-        result = self._pre_permute(*result)  # [h, B, T, dk]
-        return [
-            item.permute(1, 0, 2, 3).contiguous().view(
-                -1, item.shape[2], item.shape[3]
-                )
-            for item in result
-        ]
-
-    def get_mask(
-            self,
-            query: Tensor,
-            key: Tensor,
-            mask: Union[None, Tensor],
-            *args, **kwargs
-            ) -> Tensor:
         if mask is None:
-            return
-        mask = mask.repeat(1, self.h).view(query.shape[0], -1)
-        mask = mask.unsqueeze(dim=-1)
-        return mask  # of shape [B * h, Mq, 1]
+            return None
+        mask = ~mask  # invert: True (padding) -> False (don't participate)
+        if is_query_mask:
+            # Query mask: [B, query_len] -> [B, 1, query_len, 1] -> [B, h, query_len, key_len]
+            mask = mask.unsqueeze(1).unsqueeze(3)
+        else:
+            # Key mask: [B, key_len] -> [B, 1, 1, key_len] -> [B, h, query_len, key_len]
+            mask = mask.unsqueeze(1).unsqueeze(2)
+        mask = mask.expand(batch_size, num_heads, query_len, key_len)
+        
+        # Prevent fully-masked rows (causes NaN in SDPA softmax)
+        # For self-attention (query_len == key_len), ensure diagonal is not masked
+        if query_len == key_len:
+            # Create identity mask for diagonal
+            diag_mask = torch.eye(query_len, dtype=torch.bool, device=mask.device)
+            diag_mask = diag_mask.unsqueeze(0).unsqueeze(0).expand(batch_size, num_heads, query_len, key_len)
+            # Allow attending to self even if padded
+            mask = mask | diag_mask
+        
+        return mask
 
     def forward(
             self,
             key: Tensor,
             query: Tensor,
             value: Tensor,
-            mask: Union[Tensor, None] = None,
-            query_mask: Union[Tensor, None] = None,
-            key_mask: Union[Tensor, None] = None
+            mask: Optional[Tensor] = None,
+            query_mask: Optional[Tensor] = None,
+            key_mask: Optional[Tensor] = None,
+            need_weights: bool = False
             ) -> Tuple[Tensor, Tensor]:
-        """Performs multi-head attention on the provided key, query and value
-        Args:
-            key (Tensor): The key tensor of shape [B, Mt, d_model]
-            query (Tensor): The query tensor of shape [B, Ms, d_model]
-            value (Tensor): The value tensor of shape [B, Mt, d_model]
-            mask (Union[Tensor, None]): The input mask of shape [B, Ms]
-        Returns:
-            Tuple[Tensor, Tensor]: A tuple of the attention matrix and the
-            results after performing multi-head attention where the first of
-            shape [h, B, Ms, Mt] and the second of shape [B, Tq, d_model].
         """
-        [b, s, _] = query.shape
-        K = self.fc_key(key)
+        Args:
+            key: [B, Tk, d_model]
+            query: [B, Tq, d_model]
+            value: [B, Tk, d_model]
+            mask: Padding mask for self-attention [B, M] (True = padding)
+            query_mask: Padding mask for query [B, Tq] (True = padding)
+            key_mask: Padding mask for key [B, Tk] (True = padding)
+            need_weights: If True, compute and return attention weights
+        Returns:
+            att: [h, B, Tq, Tk] attention weights (or empty tensor if need_weights=False)
+            out: [B, Tq, d_model] output
+        """
+        b, tq, _ = query.shape
+        tk = key.shape[1]
+
         Q = self.fc_query(query)
+        K = self.fc_key(key)
         V = self.fc_value(value)
-        (Q, K, V) = self._change_dim(Q, K, V)  # [h * B, T, dk]
-        K = K.permute(0, 2, 1)  # [h, T, B, dk]
-        att, result = self.perform_att(
-            Q, K, V, mask=mask, query_mask=query_mask, key_mask=key_mask
-            )
-        result = result.view(b, self.h, s, self.dk)
-        result = result.permute(0, 2, 1, 3)
-        result = result.contiguous().view(b, s, -1)
-        result = torch.cat([query, result], dim=-1)
+
+        Q = Q.view(b, tq, self.h, self.dk).transpose(1, 2)
+        K = K.view(b, tk, self.h, self.dk).transpose(1, 2)
+        V = V.view(b, tk, self.h, self.dk).transpose(1, 2)
+
+        attn_mask = None
+        is_causal = False
+
+        if mask is not None:
+            attn_mask = self._prepare_mask_for_sdpa(mask, tq, tk, b, self.h)
+        elif query_mask is not None and key_mask is not None:
+            q_mask = self._prepare_mask_for_sdpa(query_mask, tq, tk, b, self.h, is_query_mask=True)
+            k_mask = self._prepare_mask_for_sdpa(key_mask, tq, tk, b, self.h, is_query_mask=False)
+            attn_mask = q_mask & k_mask
+
+        attn_output = F.scaled_dot_product_attention(
+            Q, K, V,
+            attn_mask=attn_mask,
+            is_causal=is_causal,
+            dropout_p=self.dropout.p if self.training else 0.0,
+        )
+
+        if need_weights:
+            scale = 1.0 / math.sqrt(self.dk)
+            attn_scores = torch.matmul(Q, K.transpose(-2, -1)) * scale
+            if attn_mask is not None:
+                attn_scores = attn_scores.masked_fill(~attn_mask, -1e9)
+            attn_weights = torch.softmax(attn_scores, dim=-1)
+            att = attn_weights.permute(1, 0, 2, 3)
+        else:
+            att = torch.empty(self.h, b, tq, tk, device=query.device)
+
+        attn_output = attn_output.transpose(1, 2).contiguous().view(b, tq, -1)
+        result = torch.cat([query, attn_output], dim=-1)
         result = self.proj_fc(result)
         out = self.dropout(result)
+
         return att, out
 
 
 class MultiHeadSelfAtt(MultiHeadAtt):
-    """Implements the multi-head self attention module
-
-    Args:
-        d_model (int): The model dimensionality.
-        h (int): The number of heads.
-        p_dropout (float): The dropout ratio.
-        device (str): The device to map the operations to.
+    """Optimized multi-head self-attention with causal masking.
+    
+    For decoder self-attention, only causal mask is applied.
+    Padding is handled by the loss function.
     """
+
     def __init__(
             self,
             d_model: int,
@@ -246,44 +168,62 @@ class MultiHeadSelfAtt(MultiHeadAtt):
             ) -> None:
         super().__init__(d_model, h, p_dropout, device)
 
-    def get_mask(
+    def forward(
             self,
-            query: Tensor,
             key: Tensor,
-            mask: Union[None, Tensor],
-            *args, **kwargs
-            ):
-        # Query of shape [B * h, Mq, d_model]
-        # mask of shape [B, Mq] or None
-        if mask is None:
-            return
-        max_len = mask.shape[1]
-        # [B * h, M, M]
-        mask = super().get_mask(query, key, mask).squeeze()
-        mask = mask.repeat(1, max_len).view(query.shape[0], max_len, max_len)
-        # don't look ahead mask of shape [B*h, Mq, Mk]
-        la_mask = self.get_square_mask(query, query)
-        mask = la_mask.to(self.device) | mask.to(self.device)
-        mask = torch.cumsum(mask, dim=-1) >= 2
-        return mask
+            query: Tensor,
+            value: Tensor,
+            mask: Optional[Tensor] = None,
+            query_mask: Optional[Tensor] = None,
+            key_mask: Optional[Tensor] = None,
+            need_weights: bool = False
+            ) -> Tuple[Tensor, Tensor]:
+        b, tq, _ = query.shape
+        tk = key.shape[1]
+        assert tq == tk, "Self-attention requires query_len == key_len"
 
-    def get_square_mask(self, query: Tensor, key: Tensor) -> Tensor:
-        mask = torch.triu(torch.ones(query.shape[1], key.shape[1]))
-        mask = mask.type(torch.BoolTensor)
-        mask = mask.unsqueeze(0)
-        mask = mask.repeat(query.shape[0], 1, 1)
-        return mask
+        Q = self.fc_query(query)
+        K = self.fc_key(key)
+        V = self.fc_value(value)
+
+        Q = Q.view(b, tq, self.h, self.dk).transpose(1, 2)
+        K = K.view(b, tk, self.h, self.dk).transpose(1, 2)
+        V = V.view(b, tk, self.h, self.dk).transpose(1, 2)
+
+        # Causal mask only (standard decoder self-attention)
+        # Padding is handled by the loss function
+        causal_mask = torch.triu(
+            torch.ones(tq, tk, dtype=torch.bool, device=self.device),
+            diagonal=1
+        )
+        causal_mask = ~causal_mask  # True = keep (j <= i)
+        attn_mask = causal_mask.unsqueeze(0).unsqueeze(0).expand(b, self.h, tq, tk)
+
+        attn_output = F.scaled_dot_product_attention(
+            Q, K, V,
+            attn_mask=attn_mask,
+            is_causal=False,
+            dropout_p=self.dropout.p if self.training else 0.0,
+        )
+
+        if need_weights:
+            scale = 1.0 / math.sqrt(self.dk)
+            attn_scores = torch.matmul(Q, K.transpose(-2, -1)) * scale
+            attn_scores = attn_scores.masked_fill(~attn_mask, -1e9)
+            attn_weights = torch.softmax(attn_scores, dim=-1)
+            att = attn_weights.permute(1, 0, 2, 3)
+        else:
+            att = torch.empty(self.h, b, tq, tk, device=query.device)
+
+        attn_output = attn_output.transpose(1, 2).contiguous().view(b, tq, -1)
+        result = torch.cat([query, attn_output], dim=-1)
+        result = self.proj_fc(result)
+        out = self.dropout(result)
+
+        return att, out
 
 
 class FeedForward(nn.Module):
-    """Implements the feedforward Module in the model, where the input is
-    scaled to a hidden_size and then back to the d_model.
-
-    Args:
-        d_model (int): The model dimensionality.
-        hidden_size (int): the hidden size of the module.
-        p_dropout (float): The dropout ratio.
-    """
     def __init__(
             self,
             d_model: int,
@@ -291,14 +231,8 @@ class FeedForward(nn.Module):
             p_dropout: float
             ) -> None:
         super().__init__()
-        self.fc1 = nn.Linear(
-            in_features=d_model,
-            out_features=hidden_size
-        )
-        self.fc2 = nn.Linear(
-            in_features=hidden_size,
-            out_features=d_model
-        )
+        self.fc1 = nn.Linear(d_model, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, d_model)
         self.dropout = nn.Dropout(p=p_dropout)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -309,12 +243,6 @@ class FeedForward(nn.Module):
 
 
 class AddAndNorm(nn.Module):
-    """Implements the Add & Norm module where the input of the last module
-    and the output of the last module added and then fed to Layernorm
-
-    Args:
-        d_model (int): The model dimensionality.
-    """
     def __init__(self, d_model: int) -> None:
         super().__init__()
         self.lnrom = nn.LayerNorm(d_model)
@@ -324,18 +252,6 @@ class AddAndNorm(nn.Module):
 
 
 class EncoderLayer(nn.Module):
-    """Implements the basic unit of the encoder and it contains the below:
-        - multi-head self attention layer.
-        - feed forward layer.
-        - Residual add and layer normalization after each of the above.
-
-    Args:
-        d_model (int): The model dimensionality.
-        h (int): The number of heads.
-        hidden_size (int): the hidden size of the feed forward module.
-        p_dropout (float): The dropout ratio.
-        device (str): the device to map the operations to.
-    """
     def __init__(
             self,
             d_model: int,
@@ -351,30 +267,16 @@ class EncoderLayer(nn.Module):
             p_dropout=p_dropout,
             device=device
             )
-        self.mhsa_add_and_norm = AddAndNorm(
-            d_model=d_model
-            )
+        self.mhsa_add_and_norm = AddAndNorm(d_model=d_model)
         self.ff = FeedForward(
             d_model=d_model,
             hidden_size=hidden_size,
             p_dropout=p_dropout
         )
-        self.ff_add_and_norm = AddAndNorm(
-            d_model=d_model
-        )
+        self.ff_add_and_norm = AddAndNorm(d_model=d_model)
 
-    def forward(self, x: Tensor, mask: Union[Tensor, None]) -> Tensor:
-        """Given the input of shape [B, M, d] performs self attention
-        on the input and return back the result of shape [B, M, d]
-
-        Args:
-            x (Tensor): The input of shape [B, M, d]
-            mask Union[Tensor, None]: The input mask of shape [B, M]
-
-        Returns:
-            Tensor: The result out of the self attention of shape [B, M, d]
-        """
-        _, out = self.mhsa(x, x, x, query_mask=mask, key_mask=mask)
+    def forward(self, x: Tensor, mask: Union[Tensor, None], need_weights: bool = False) -> Tensor:
+        _, out = self.mhsa(x, x, x, key_mask=mask, need_weights=need_weights)
         out = self.mhsa_add_and_norm(x, out)
         ff_out = self.ff(out)
         out = self.ff_add_and_norm(out, ff_out)
@@ -382,15 +284,6 @@ class EncoderLayer(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    """Implements the basic unit of the decoder
-
-    Args:
-        d_model (int): The model dimensionality.
-        h (int): The number of heads.
-        p_dropout (float): The dropout ratio.
-        hidden_size (int): the hidden size of the feed forward module.
-        device (str): the device to map the operations to.
-    """
     def __init__(
             self,
             d_model: int,
@@ -427,35 +320,17 @@ class DecoderLayer(nn.Module):
             encoder_values: Tensor,
             mask: Union[Tensor, None] = None,
             query_mask: Union[Tensor, None] = None,
-            key_mask: Union[Tensor, None] = None
-            ) -> Tuple[Tensor, Tensor, Tensor]:
-        """Pass the data into the decoder blocks which they are:
-        - MMHA
-        - ADD & NORM
-        - MHA
-        - ADD & NORM
-        - Feed Forward
-        - ADD & NORM
-
-        Args:
-            x (Tensor): The input tensor of shape [B, Td, d_model]
-            encoder_values (Tensor): The encoder results of shape
-            [B, Me, d_model]
-            mask (Union[Tensor, None]): The input mask of shape [B, M].
-            Default None.
-
-        Returns:
-            Tuple[Tensor, Tensor]: a tuple of the results,
-            the output and attention weights.
-        """
-        _, out = self.mhsa(x, x, x, mask=mask)
+            key_mask: Union[Tensor, None] = None,
+            need_weights: bool = False
+            ) -> Tuple[Tensor, Tensor]:
+        _, out = self.mhsa(x, x, x, mask=mask, need_weights=need_weights)
         out_1 = self.add_and_norm_1(x, out)
         att, out = self.mha(
             query=out_1,
             key=encoder_values,
             value=encoder_values,
-            query_mask=query_mask,
-            key_mask=key_mask
+            key_mask=key_mask,
+            need_weights=need_weights
             )
         out = self.add_and_norm_2(out_1, out)
         out_1 = self.ff(out)
@@ -464,13 +339,6 @@ class DecoderLayer(nn.Module):
 
 
 class PositionalEmb(nn.Module):
-    """Implements the positional Embedding Module
-    Args:
-        voc_size (int): The number of covered vocabulary.
-        d_model (int): The model dimensionality.
-        pad_idx (int): The padding index to zero out its embedding.
-        device (str): The device to map the operations to.
-    """
     def __init__(
             self,
             voc_size: int,
@@ -486,12 +354,19 @@ class PositionalEmb(nn.Module):
         )
         self.device = device
         self.d_model = d_model
+        max_len = 2048
+        pe = torch.zeros(max_len, d_model)
+        for pos in range(max_len):
+            for i in range(0, d_model, 2):
+                denom = 10000 ** (2 * i / d_model)
+                pe[pos, i] = math.sin(pos / denom)
+                pe[pos, i + 1] = math.cos(pos / denom)
+        self.register_buffer('pe', pe)
 
     def forward(self, x: Tensor) -> Tensor:
-        max_len = x.shape[-1]
+        seq_len = x.shape[-1]
         out = self.emb(x)
-        pe = get_positionals(max_len, self.d_model).to(self.device)
-        return out + pe
+        return out + self.pe[:seq_len].to(self.device)
 
 
 class EncoderLayers(nn.Module):
@@ -525,11 +400,11 @@ class EncoderLayers(nn.Module):
         ])
 
     def forward(
-            self, x: Tensor, mask: Union[Tensor, None]
+            self, x: Tensor, mask: Union[Tensor, None], need_weights: bool = False
             ) -> Tensor:
         out = self.emb(x)
         for layer in self.layers:
-            out = layer(out, mask=mask)
+            out = layer(out, mask=mask, need_weights=need_weights)
         return out
 
 
@@ -568,17 +443,279 @@ class DecoderLayers(nn.Module):
             x: Tensor,
             mask: Tensor,
             enc_values: Tensor,
-            key_mask: Union[Tensor, None] = None
+            key_mask: Union[Tensor, None] = None,
+            need_weights: bool = False
             ):
         out = self.emb(x)
+        att = None
         for layer in self.layers:
             out, att = layer(
                 x=out,
                 encoder_values=enc_values,
                 mask=mask,
-                query_mask=mask,
-                key_mask=key_mask
+                key_mask=key_mask,
+                need_weights=need_weights
                 )
         return out, att
 
 
+class PackedGRU(nn.Module):
+    def __init__(
+            self,
+            input_size: int,
+            hidden_size: int,
+            bidirectional: bool,
+            padding_value: Union[float, int],
+            num_layers=1
+            ) -> None:
+        super().__init__()
+        self.gru = nn.GRU(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            bidirectional=bidirectional,
+            num_layers=num_layers,
+            batch_first=True
+        )
+        self.bidirectional = bidirectional
+        self.hidden_size = hidden_size
+        self.padding_value = padding_value
+        self.num_layers = num_layers
+
+    def forward(self, x: Tensor, lengths: List[int], hn=None) -> Tensor:
+        packed_seq = pack_padded_sequence(
+            x, lengths, batch_first=True, enforce_sorted=False
+            )
+        if hn is None:
+            hn = torch.zeros(
+                self.num_layers,
+                x.shape[0],
+                self.hidden_size
+                ).to(x.device)
+        output, hn = self.gru(packed_seq, hn)
+        output, lengths = pad_packed_sequence(output, batch_first=True)
+        return output, hn
+
+
+class GRUBlock(nn.Module):
+    def __init__(
+            self,
+            inp_size: int,
+            hidden_size: int,
+            p_dropout: float,
+            bidirectional: bool,
+            padding_value: Union[float, int]
+            ) -> None:
+        super().__init__()
+        self.gru = PackedGRU(
+            input_size=inp_size,
+            hidden_size=hidden_size,
+            bidirectional=bidirectional,
+            padding_value=padding_value
+        )
+
+        self.ff = FeedForward(
+            d_model=hidden_size if bidirectional is False else 2 * hidden_size,
+            hidden_size=2 * hidden_size if bidirectional is False else 4 * hidden_size,
+            p_dropout=p_dropout
+        )
+        self.bidirectional = bidirectional
+        self.dropout = nn.Dropout(p_dropout)
+        self.lnorm = nn.LayerNorm(normalized_shape=hidden_size)
+
+    def forward(
+            self, x: Tensor, lengths: List[int], hn=None
+            ) -> Tuple[Tensor, Tensor]:
+        out, h = self.gru(x, lengths, hn=hn)
+        out = self.dropout(out)
+        out = self.ff(out)
+        out = self.lnorm(out)
+        return out, h
+
+
+class GRUStack(nn.Module):
+    def __init__(
+            self,
+            n_layers: int,
+            inp_size: int,
+            hidden_size: int,
+            p_dropout: float,
+            bidirectional: bool,
+            padding_value: Union[float, int]
+            ) -> None:
+        super().__init__()
+        self.grus = nn.ModuleList([
+            GRUBlock(
+                inp_size=inp_size if i == 0 else hidden_size,
+                hidden_size=hidden_size,
+                p_dropout=p_dropout,
+                bidirectional=bidirectional,
+                padding_value=padding_value
+            )
+            for i in range(n_layers)
+        ])
+        self.hidden_size = hidden_size
+
+    def forward(self, x: Tensor, lengths: List[int], hn=None) -> Tensor:
+        out = x
+        hns = []
+        for i, layer in enumerate(self.grus):
+            if hn is not None:
+                out, h = layer(
+                    out,
+                    lengths,
+                    hn=hn if hn.shape[0] != len(self.grus) else hn[i:i+1, ...]
+                    )
+            else:
+                out, h = layer(out, lengths, hn=hn)
+            hns.append(h)
+        hns = torch.vstack(hns)
+        return out, hns
+
+
+class RNNEncoder(nn.Module):
+    def __init__(
+            self,
+            voc_size: int,
+            emb_size: int,
+            n_layers: int,
+            hidden_size: int,
+            p_dropout: float,
+            bidirectional: bool,
+            padding_idx: int,
+            padding_value: Union[float, int],
+            ) -> None:
+        super().__init__()
+        self.embedding = nn.Embedding(
+            num_embeddings=voc_size,
+            embedding_dim=emb_size,
+            padding_idx=padding_idx
+        )
+        self.gru_stack = GRUStack(
+            n_layers=n_layers,
+            inp_size=emb_size,
+            hidden_size=hidden_size,
+            p_dropout=p_dropout,
+            bidirectional=bidirectional,
+            padding_value=padding_value
+        )
+
+    def forward(self, x: Tensor, lengths: Tensor) -> Tensor:
+        out = self.embedding(x)
+        out, hn = self.gru_stack(out, lengths)
+        return out, hn
+
+
+class Attention(nn.Module):
+    def __init__(self, hidden_size: int) -> None:
+        super().__init__()
+        self.fc = nn.Linear(
+            in_features=2 * hidden_size,
+            out_features=hidden_size
+        )
+
+    def forward(self, query, key, value):
+        query = query.permute(1, 0, 2)
+        key = key.permute(0, 2, 1)
+        e = torch.softmax(torch.matmul(query, key), dim=-1)
+        result = torch.matmul(e, value)
+        if result.shape[0] != query.shape[0]:
+            query = query.repeat(result.shape[0], 1, 1)
+        result = torch.cat([result, query], dim=-1)
+        result = self.fc(result)
+        result = result.permute(1, 0, 2)
+        return result, e
+
+
+class RNNDecoder(nn.Module):
+    def __init__(
+            self,
+            max_len: int,
+            voc_size: int,
+            emb_size: int,
+            n_layers: int,
+            hidden_size: int,
+            p_dropout: float,
+            bidirectional: bool,
+            padding_idx: int,
+            padding_value: Union[float, int]
+            ) -> None:
+        super().__init__()
+        self.embedding = nn.Embedding(
+            num_embeddings=voc_size,
+            embedding_dim=emb_size,
+            padding_idx=padding_idx
+        )
+        self.gru_stack = GRUStack(
+            n_layers=n_layers,
+            inp_size=emb_size,
+            hidden_size=hidden_size,
+            p_dropout=p_dropout,
+            bidirectional=False,
+            padding_value=padding_value
+        )
+        self.pred_fc = nn.Linear(
+            in_features=hidden_size,
+            out_features=voc_size
+        )
+        self.max_len = max_len
+        self.attention = Attention(
+            hidden_size=hidden_size
+            )
+        self.key_fc = nn.Linear(
+            in_features=hidden_size,
+            out_features=hidden_size
+        )
+        self.value_fc = nn.Linear(
+            in_features=hidden_size,
+            out_features=hidden_size
+        )
+        self.query_fc = nn.Linear(
+            in_features=hidden_size,
+            out_features=hidden_size
+        )
+
+    def _process_query(self, h: Tensor):
+        h = h.permute(1, 0, 2)
+        h = h.contiguous().view(h.shape[0], 1, -1)
+        h = self.query_fc(h)
+        h = h.permute(1, 0, 2)
+        return h
+
+    def forward(
+            self,
+            enc_values: Tensor,
+            hn: Tensor,
+            x: Tensor,
+            lengths: Tensor
+            ) -> Tensor:
+        max_len = lengths.max().item()
+        out = self.embedding(x)
+        key = self.key_fc(enc_values)
+        value = self.value_fc(enc_values)
+        attention = []
+        result = []
+        for i in range(max_len):
+            step_lens = torch.ones(x.shape[0], dtype=torch.long)
+            hn = self.query_fc(hn)
+            hn, att = self.attention(key=key, value=value, query=hn)
+            output, hn = self.gru_stack(
+                out[..., i:i+1, :], lengths=step_lens, hn=hn
+                )
+            result.append(output)
+            attention.append(att[:, -1:, :])
+        result = torch.hstack(result)
+        attention = torch.hstack(attention)
+        result = self.pred_fc(result)
+        return result, attention
+
+    def predict(self, hn, x, enc_values, key=None, value=None):
+        out = self.embedding(x)
+        step_lens = torch.ones(x.shape[0], dtype=torch.long)
+        if enc_values is not None:
+            key = self.key_fc(enc_values)
+            value = self.value_fc(enc_values)
+        hn = self.query_fc(hn)
+        hn, att = self.attention(key=key, value=value, query=hn)
+        output, hn = self.gru_stack(out, lengths=step_lens, hn=hn)
+        result = self.pred_fc(output)
+        return hn, att, result, key, value

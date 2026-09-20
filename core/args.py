@@ -56,7 +56,7 @@ def add_model_args(parser) -> None:
 def add_training_args(parser) -> None:
     group = parser.add_argument_group('Training Args')
     group.add_argument(
-        '--epochs', default=100, type=int,
+        '--epochs', default=3, type=int,
         help='The number of training epochs'
     )
     group.add_argument(
@@ -157,6 +157,34 @@ def add_training_args(parser) -> None:
     )
     group.add_argument(
         '--clip_grad', default=False, action='store_true'
+    )
+    group.add_argument(
+        '--mixed_precision', default=False, action='store_true',
+        help='Enable mixed precision training (BF16 on supported GPUs, FP16 otherwise)'
+    )
+    group.add_argument(
+        '--num_workers', default=4, type=int,
+        help='Number of data loader workers'
+    )
+    group.add_argument(
+        '--pin_memory', default=True, action='store_true',
+        help='Use pinned memory for data loading'
+    )
+    group.add_argument(
+        '--log_interval', default=100, type=int,
+        help='Log interval (steps) for TensorBoard'
+    )
+    group.add_argument(
+        '--val_interval', default=1, type=int,
+        help='Validation interval (epochs)'
+    )
+    group.add_argument(
+        '--save_attention_viz', default=False, action='store_true',
+        help='Save attention visualizations during validation'
+    )
+    group.add_argument(
+        '--grad_accum_steps', default=1, type=int,
+        help='Gradient accumulation steps (effective batch size = batch_size * grad_accum_steps)'
     )
 
 

@@ -2,9 +2,8 @@ import os
 from pathlib import Path
 from typing import Tuple, Union
 from core.interfaces import ITokenizer
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
 import torch
-from torch.utils.data.distributed import DistributedSampler
 import pandas as pd
 from torch import Tensor
 
@@ -76,7 +75,7 @@ class ArabicData(Dataset):
         return self.df.shape[0]
 
 
-def get_dist_data_laoder(
+def get_train_loader(
         data_path,
         tokenizer,
         max_len,
@@ -85,7 +84,9 @@ def get_dist_data_laoder(
         rank,
         world_size,
         dist_key,
-        clean_key
+        clean_key,
+        num_workers=0,
+        pin_memory=False
         ):
     dataset = ArabicData(
         data_path=data_path,
@@ -96,29 +97,38 @@ def get_dist_data_laoder(
         dist_key=dist_key,
         clean_key=clean_key
     )
-    sampler = DistributedSampler(
-        dataset=dataset,
-        rank=rank,
-        num_replicas=world_size,
-        drop_last=True
-    )
+    if world_size > 1:
+        from torch.utils.data.distributed import DistributedSampler
+        sampler = DistributedSampler(
+            dataset=dataset,
+            rank=rank,
+            num_replicas=world_size,
+            drop_last=True,
+            shuffle=True
+        )
+    else:
+        sampler = RandomSampler(dataset)
     return DataLoader(
         dataset,
         batch_size=batch_size,
         sampler=sampler,
-        num_workers=0,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=num_workers > 0,
         drop_last=True
-        )
+    )
 
 
-def get_data_laoder(
+def get_test_loader(
         data_path,
         tokenizer,
         batch_size,
         max_len,
         ratio,
         dist_key,
-        clean_key
+        clean_key,
+        num_workers=0,
+        pin_memory=False
         ):
     dataset = ArabicData(
         data_path=data_path,
@@ -132,10 +142,12 @@ def get_data_laoder(
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        drop_last=True,
-        shuffle=True,
-        num_workers=0
-        )
+        sampler=SequentialSampler(dataset),
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=num_workers > 0,
+        drop_last=False
+    )
 
 
 def get_train_test_loaders(args, rank: int, tokenizer: ITokenizer) -> tuple:
@@ -143,7 +155,11 @@ def get_train_test_loaders(args, rank: int, tokenizer: ITokenizer) -> tuple:
         f'{args.train_path} does not exist!'
     assert os.path.exists(args.test_path), \
         f'{args.test_path} does not exist!'
-    train_loader = get_dist_data_laoder(
+    
+    num_workers = getattr(args, 'num_workers', 0)
+    pin_memory = getattr(args, 'pin_memory', False)
+    
+    train_loader = get_train_loader(
         data_path=args.train_path,
         tokenizer=tokenizer,
         max_len=args.max_len,
@@ -152,15 +168,19 @@ def get_train_test_loaders(args, rank: int, tokenizer: ITokenizer) -> tuple:
         rank=rank,
         world_size=args.n_gpus,
         dist_key=args.dist_key,
-        clean_key=args.clean_key
+        clean_key=args.clean_key,
+        num_workers=num_workers,
+        pin_memory=pin_memory
     )
-    test_loader = get_data_laoder(
+    test_loader = get_test_loader(
         data_path=args.test_path,
         tokenizer=tokenizer,
         batch_size=args.batch_size,
         max_len=args.max_len,
         ratio=args.distortion_ratio,
         dist_key=args.dist_key,
-        clean_key=args.clean_key
+        clean_key=args.clean_key,
+        num_workers=num_workers,
+        pin_memory=pin_memory
     )
     return train_loader, test_loader

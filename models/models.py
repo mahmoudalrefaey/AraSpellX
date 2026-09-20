@@ -40,11 +40,12 @@ class Transformer(nn.Module):
             enc_inp: Tensor,
             dec_inp: Tensor,
             enc_mask: Tensor,
-            dec_mask: Tensor
+            dec_mask: Tensor,
+            need_weights: bool = False
             ):
-        enc_vals = self.encoder(x=enc_inp, mask=enc_mask)
+        enc_vals = self.encoder(x=enc_inp, mask=enc_mask, need_weights=need_weights)
         out, att = self.decoder(
-            x=dec_inp, mask=dec_mask, enc_values=enc_vals, key_mask=enc_mask
+            x=dec_inp, mask=dec_mask, enc_values=enc_vals, key_mask=enc_mask, need_weights=need_weights
             )
         out = self.fc(out)
         return nn.functional.log_softmax(out, dim=-1), att
