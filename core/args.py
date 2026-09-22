@@ -60,7 +60,7 @@ def add_training_args(parser) -> None:
         help='The number of training epochs'
     )
     group.add_argument(
-        '--batch_size', default=128, type=int,
+        '--batch_size', default=32, type=int,
         help='The training batch size'
     )
     group.add_argument(
@@ -144,7 +144,7 @@ def add_training_args(parser) -> None:
         help='The optimizer to use, either adam, adamw, or adamexp'
     )
     group.add_argument(
-        '--lr', default=0.001, type=float,
+        '--lr', default=1e-4, type=float,
         help='The learning rate, it is only used when adam optimizer used'
     )
     group.add_argument(
@@ -183,8 +183,16 @@ def add_training_args(parser) -> None:
         help='Save attention visualizations during validation'
     )
     group.add_argument(
-        '--grad_accum_steps', default=2, type=int,
+        '--grad_accum_steps', default=8, type=int,
         help='Gradient accumulation steps (effective batch size = batch_size * grad_accum_steps)'
+    )
+    group.add_argument(
+        '--ckpt_interval_steps', default=5000, type=int,
+        help='Save checkpoint every N steps (default: 5000)'
+    )
+    group.add_argument(
+        '--max_checkpoints', default=5, type=int,
+        help='Maximum checkpoints to keep in rotation (default: 5)'
     )
 
 

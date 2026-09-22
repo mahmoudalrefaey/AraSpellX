@@ -74,7 +74,7 @@ The original implementation performed character-level tokenization in `Dataset._
 | Pre-tokenized, `num_workers=4` (Linux/test set) | 0.008 sec | 28,000 | ~2.4 min |
 
 ### Key Metrics (Production Configuration)
-- **Effective batch size**: 256 (batch_size=128 × grad_accum=2)
+- **Effective batch size**: 256 (batch_size=32 × grad_accum=8)
 - **Mixed precision**: BF16 (autocast)
 - **Time per effective step**: ~0.4s
 - **Samples/second**: 640
@@ -114,8 +114,8 @@ The optimized attention implementation was verified to be mathematically equival
 ```bash
 python train.py \
     --epochs 3 \
-    --batch_size 128 \
-    --grad_accum_steps 2 \
+    --batch_size 32 \
+    --grad_accum_steps 8 \
     --mixed_precision \
     --num_workers 0 \
     --pin_memory \
@@ -135,7 +135,7 @@ python train.py \
 
 ## Notes
 
-1. **Gradient Accumulation**: Required because batch_size=256 needs 10.6 GB VRAM (exceeds 6 GB). Using batch_size=128 with grad_accum_steps=2 gives effective batch_size=256 within 1.4 GB VRAM.
+1. **Gradient Accumulation**: Required because batch_size=256 needs 10.6 GB VRAM (exceeds 6 GB). Using batch_size=32 with grad_accum_steps=8 gives effective batch_size=256 within 1.4 GB VRAM.
 
 2. **Mixed Precision**: BF16 is used automatically on Ampere (RTX 3060). If BF16 issues arise, FP16 fallback is automatic.
 
