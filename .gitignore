@@ -16,6 +16,7 @@ dist/
 downloads/
 outdir/
 eggs/
+.kilo/
 .eggs/
 lib/
 lib64/
