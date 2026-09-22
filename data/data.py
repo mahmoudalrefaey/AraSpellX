@@ -6,6 +6,7 @@ from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampl
 import torch
 import pandas as pd
 from torch import Tensor
+from tqdm import tqdm
 
 
 class ArabicData(Dataset):
@@ -38,6 +39,40 @@ class ArabicData(Dataset):
                 f'{list(self.df.columns)}'
             )
 
+        cache_path = Path(data_path).with_suffix('.tokenized.pt')
+        if cache_path.exists():
+            print(f"Loading pre-tokenized data from {cache_path}...")
+            cached = torch.load(cache_path, weights_only=False)
+            self.clean_tokenized = cached['clean']
+            self.distorted_tokenized = cached['distorted']
+            print(f"Loaded {len(self.clean_tokenized)} samples.")
+        else:
+            print(f"Pre-tokenizing {len(self.df)} samples (first run only)...")
+            clean_texts = self.df[self.clean_key].tolist()
+            distorted_texts = self.df[self.dist_key].tolist()
+            
+            # Tokenize with progress bar
+            clean_tokenized = []
+            distorted_tokenized = []
+            for i in tqdm(range(len(clean_texts)), desc="Tokenizing clean"):
+                clean_tokenized.append(self.tokenizer.tokenize(
+                    clean_texts[i], add_sos=True, add_eos=True
+                ))
+            for i in tqdm(range(len(distorted_texts)), desc="Tokenizing distorted"):
+                distorted_tokenized.append(self.tokenizer.tokenize(
+                    distorted_texts[i], add_sos=True, add_eos=True
+                ))
+            
+            self.clean_tokenized = clean_tokenized
+            self.distorted_tokenized = distorted_tokenized
+            
+            print(f"Saving pre-tokenized data to {cache_path}...")
+            torch.save({
+                'clean': self.clean_tokenized,
+                'distorted': self.distorted_tokenized
+            }, cache_path)
+            print("Pre-tokenization complete and cached.")
+
     def pad(self, line: list, max_len: int) -> Tuple[list, int]:
         length = len(line)
         diff = max_len - length
@@ -45,10 +80,7 @@ class ArabicData(Dataset):
         return line + [self.pad_idx] * diff, diff
 
     def _get_clean(self, idx: int) -> Tuple[Tensor, Tensor]:
-        item = self.df.iloc[idx][self.clean_key]
-        item = self.tokenizer.tokenize(
-            item, add_sos=True, add_eos=True
-            )
+        item = self.clean_tokenized[idx]
         mask = [False] * len(item)
         item, diff = self.pad(item, self.max_len)
         mask += [True] * diff
@@ -57,8 +89,7 @@ class ArabicData(Dataset):
         return item, mask
 
     def _get_distorted(self, idx: int) -> Tuple[Tensor, Tensor]:
-        item = self.df.iloc[idx][self.dist_key]
-        item = self.tokenizer.tokenize(item, add_sos=True, add_eos=True)
+        item = self.distorted_tokenized[idx]
         mask = [False] * len(item)
         item, diff = self.pad(item, self.max_dist_len + 1)
         mask += [True] * diff
