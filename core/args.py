@@ -41,10 +41,6 @@ def add_model_args(parser) -> None:
         help='The model hidden dim'
     )
     group.add_argument(
-        '--rnn_emb_size', default=512, type=int,
-        help='The embedding size of the RNN model'
-    )
-    group.add_argument(
         '--bidirectional', default=False, action='store_true'
     )
     group.add_argument(
