@@ -238,6 +238,43 @@ def get_preprocessing_args():
     return parser.parse_args()
 
 
+def add_evaluation_args(parser) -> None:
+    group = parser.add_argument_group('Evaluation Args')
+    group.add_argument(
+        '--checkpoint', default=None, type=str,
+        help='Path to the checkpoint file to evaluate'
+    )
+    group.add_argument(
+        '--eval_batch_size', default=32, type=int,
+        help='Batch size for evaluation'
+    )
+    group.add_argument(
+        '--max_gen_len', default=128, type=int,
+        help='Maximum generation length for autoregressive decoding'
+    )
+    group.add_argument(
+        '--num_samples', default=None, type=int,
+        help='Number of samples to evaluate (None for all)'
+    )
+    group.add_argument(
+        '--save_predictions', default=False, action='store_true',
+        help='Save individual predictions to JSON'
+    )
+    group.add_argument(
+        '--output_dir', default='outdir/evaluation', type=str,
+        help='Directory to save evaluation results'
+    )
+
+
+def get_eval_args():
+    parser = ArgumentParser()
+    add_model_args(parser)
+    add_training_args(parser)
+    add_evaluation_args(parser)
+    args = parser.parse_args()
+    return validate_training_args(args)
+
+
 def get_train_args():
     parser = ArgumentParser()
     add_model_args(parser)

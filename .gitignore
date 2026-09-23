@@ -17,6 +17,7 @@ downloads/
 outdir/
 eggs/
 .kilo/
+legecy-araspell/
 .eggs/
 lib/
 lib64/
