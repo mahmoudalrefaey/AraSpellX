@@ -1,12 +1,108 @@
 import os
+import hashlib
+import json
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Tuple, Union, Dict, Any
 from core.interfaces import ITokenizer
 from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
 import torch
 import pandas as pd
 from torch import Tensor
 from tqdm import tqdm
+
+
+CACHE_VERSION = 1
+
+
+def compute_tokenizer_fingerprint(tokenizer: ITokenizer) -> str:
+    """Compute a deterministic fingerprint of the tokenizer vocabulary and config."""
+    vocab_items = sorted(tokenizer._token_to_id.items())
+    special = {
+        'pad': tokenizer.special_tokens.pad_id,
+        'sos': tokenizer.special_tokens.sos_id,
+        'eos': tokenizer.special_tokens.eos_id,
+    }
+    if tokenizer.special_tokens.blank_id is not None:
+        special['blank'] = tokenizer.special_tokens.blank_id
+    
+    data = {
+        'vocab': vocab_items,
+        'special_tokens': special,
+        'vocab_size': tokenizer.vocab_size,
+    }
+    serialized = json.dumps(data, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(serialized.encode('utf-8')).hexdigest()[:16]
+
+
+def compute_dataset_fingerprint(data_path: Union[str, Path], clean_key: str, dist_key: str) -> str:
+    """Compute a fingerprint of the dataset (row count + column names + sample hash)."""
+    df = pd.read_csv(data_path, nrows=1000)  # Sample first 1000 rows for speed
+    sample_data = df[clean_key].tolist() + df[dist_key].tolist()
+    sample_str = '|'.join(sample_data)
+    
+    data = {
+        'rows': len(df),
+        'columns': list(df.columns),
+        'clean_key': clean_key,
+        'dist_key': dist_key,
+        'sample_hash': hashlib.md5(sample_str.encode('utf-8')).hexdigest()[:16],
+    }
+    serialized = json.dumps(data, sort_keys=True)
+    return hashlib.sha256(serialized.encode('utf-8')).hexdigest()[:16]
+
+
+def compute_config_fingerprint(max_len: int, ratio: float, dist_key: str, clean_key: str) -> str:
+    """Compute fingerprint of preprocessing configuration."""
+    data = {
+        'max_len': max_len,
+        'ratio': ratio,
+        'dist_key': dist_key,
+        'clean_key': clean_key,
+    }
+    serialized = json.dumps(data, sort_keys=True)
+    return hashlib.sha256(serialized.encode('utf-8')).hexdigest()[:16]
+
+
+def get_cache_fingerprint(
+        tokenizer: ITokenizer,
+        data_path: Union[str, Path],
+        max_len: int,
+        ratio: float,
+        dist_key: str,
+        clean_key: str
+        ) -> Dict[str, str]:
+    """Compute combined fingerprint for cache validation."""
+    return {
+        'version': CACHE_VERSION,
+        'tokenizer': compute_tokenizer_fingerprint(tokenizer),
+        'dataset': compute_dataset_fingerprint(data_path, clean_key, dist_key),
+        'config': compute_config_fingerprint(max_len, ratio, dist_key, clean_key),
+    }
+
+
+def validate_cache(cache_path: Union[str, Path], expected_fingerprint: Dict[str, str]) -> bool:
+    """Validate that cache matches expected fingerprint."""
+    cache_path = Path(cache_path)
+    if not cache_path.exists():
+        return False
+    
+    try:
+        cached = torch.load(cache_path, weights_only=False)
+        cached_fp = cached.get('fingerprint')
+        if cached_fp is None:
+            print(f"Cache {cache_path} missing fingerprint - invalidating")
+            return False
+        
+        for key, expected_value in expected_fingerprint.items():
+            if cached_fp.get(key) != expected_value:
+                print(f"Cache fingerprint mismatch on '{key}': expected {expected_value}, got {cached_fp.get(key)}")
+                return False
+        
+        print(f"Cache fingerprint validated: {cache_path}")
+        return True
+    except Exception as e:
+        print(f"Cache validation error: {e} - invalidating")
+        return False
 
 
 class ArabicData(Dataset):
@@ -40,14 +136,19 @@ class ArabicData(Dataset):
             )
 
         cache_path = Path(data_path).with_suffix('.tokenized.pt')
-        if cache_path.exists():
+        fingerprint = get_cache_fingerprint(tokenizer, data_path, max_len, ratio, dist_key, clean_key)
+        
+        if cache_path.exists() and validate_cache(cache_path, fingerprint):
             print(f"Loading pre-tokenized data from {cache_path}...")
             cached = torch.load(cache_path, weights_only=False)
             self.clean_tokenized = cached['clean']
             self.distorted_tokenized = cached['distorted']
             print(f"Loaded {len(self.clean_tokenized)} samples.")
         else:
-            print(f"Pre-tokenizing {len(self.df)} samples (first run only)...")
+            if cache_path.exists():
+                print(f"Cache invalid or missing fingerprint - rebuilding...")
+            else:
+                print(f"Pre-tokenizing {len(self.df)} samples (first run only)...")
             clean_texts = self.df[self.clean_key].tolist()
             distorted_texts = self.df[self.dist_key].tolist()
             
@@ -69,7 +170,8 @@ class ArabicData(Dataset):
             print(f"Saving pre-tokenized data to {cache_path}...")
             torch.save({
                 'clean': self.clean_tokenized,
-                'distorted': self.distorted_tokenized
+                'distorted': self.distorted_tokenized,
+                'fingerprint': fingerprint,
             }, cache_path)
             print("Pre-tokenization complete and cached.")
 

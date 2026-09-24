@@ -201,7 +201,7 @@ class CharTokenizer(BaseTokenizer):
         super().__init__()
 
     def get_tokens(self, data: List[str]):
-        return set(''.join(data))
+        return sorted(set(''.join(data)))
 
     def preprocess_tokens(self, sentence: str) -> List[str]:
         return list(sentence)
