@@ -5,11 +5,16 @@ import random
 from typing import Union, Any, List
 from core.interfaces import IProcess, IProcessor
 from data.processes import (
+    AlefMaqsuraToYa,
+    HamzaAlefDropper,
+    HamzaSeatDropper,
     RandomCharRemover,
     RandomCharsInjector,
     RandomCharsSwapper,
     RandomNeighborReplacer,
-    RandomWordsCollapsor
+    RandomWordsCollapsor,
+    TaMarbutaToHa,
+    ZahToDad
     )
 
 
@@ -106,16 +111,80 @@ class TextProcessor(IProcessor):
         return self.run(sentence)
 
 
+class RealWorldDistorter(IProcessor):
+    """Applies real-world spelling habits, then random typos.
+
+    Real writers apply a spelling habit consistently across a sentence, so
+    each habit is switched on per sentence with probability habit_prob and
+    then applied to its matches (see the habit's own probability). The typo
+    ratio is drawn per sentence from typo_ratios, so the model also sees
+    lightly distorted and typo-free inputs.
+    """
+    def __init__(
+            self,
+            habits: List[IProcess],
+            habit_prob: float,
+            typo_ratios: List[float],
+            typo_processes: List[IProcess]
+            ) -> None:
+        super().__init__()
+        self.habits = habits
+        self.habit_prob = habit_prob
+        self.typo_distorters = [
+            TextDistorter(ratio, typo_processes) for ratio in typo_ratios
+        ]
+
+    def apply_habits(self, line: str) -> str:
+        for habit in self.habits:
+            if random.random() < self.habit_prob:
+                line = habit.execute(line)
+        return line
+
+    def run(self, line: str) -> str:
+        line = self.apply_habits(line)
+        return random.choice(self.typo_distorters).run(line)
+
+    def dist_run(self, line: str) -> str:
+        return self.run(line)
+
+
+def get_typo_processes() -> List[IProcess]:
+    return [
+        RandomCharsInjector(constants.VALID_CHARS),
+        RandomCharsSwapper(),
+        RandomCharRemover(),
+        RandomWordsCollapsor(),
+        RandomNeighborReplacer(
+            constants.KEYBOARD_KEYS, constants.KEYBOARD_BLANK
+            )
+    ]
+
+
+def get_habits(apply_prob: float) -> List[IProcess]:
+    return [
+        HamzaAlefDropper(apply_prob),
+        TaMarbutaToHa(apply_prob),
+        AlefMaqsuraToYa(apply_prob),
+        HamzaSeatDropper(apply_prob),
+        ZahToDad(apply_prob)
+    ]
+
+
 def get_text_distorter(ratio):
     return TextDistorter(
         ratio=ratio,
-        processes=[
-            RandomCharsInjector(constants.VALID_CHARS),
-            RandomCharsSwapper(),
-            RandomCharRemover(),
-            RandomWordsCollapsor(),
-            RandomNeighborReplacer(
-                constants.KEYBOARD_KEYS, constants.KEYBOARD_BLANK
-                )
-        ]
+        processes=get_typo_processes()
+    )
+
+
+def get_real_world_distorter(
+        habit_prob: float = 0.5,
+        apply_prob: float = 0.9,
+        typo_ratios: List[float] = (0.0, 0.02, 0.05, 0.1)
+        ) -> RealWorldDistorter:
+    return RealWorldDistorter(
+        habits=get_habits(apply_prob),
+        habit_prob=habit_prob,
+        typo_ratios=list(typo_ratios),
+        typo_processes=get_typo_processes()
     )

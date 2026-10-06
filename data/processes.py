@@ -282,3 +282,72 @@ class CharsNormalizer(IProcess):
 
     def execute(self, lines: List[str]):
         return list(filter(self._normalize, lines))
+
+
+class ProbabilisticReplacer(IProcess):
+    """Replaces each match of a pattern, independently with probability p."""
+
+    def __init__(self, pattern: str, repl: str, p: float) -> None:
+        super().__init__()
+        self.pat = re.compile(pattern)
+        self.repl = repl
+        self.p = p
+
+    def _replace(self, match: re.Match) -> str:
+        if random.random() < self.p:
+            return match.expand(self.repl)
+        return match.group()
+
+    def execute(self, line: str) -> str:
+        return self.pat.sub(self._replace, line)
+
+
+# Real-world spelling habits: the standard form found in the clean text is
+# rewritten the way it is commonly typed. Each habit covers an error category
+# measured in real user input that the random typo processes never produce.
+
+class HamzaAlefDropper(ProbabilisticReplacer):
+    """Word-initial hamza on alef, after an optional clitic prefix:
+    أصبح -> اصبح, إلى -> الى, آراء -> اراء, للأدب -> للادب, وأكثر -> واكثر."""
+
+    def __init__(self, p: float) -> None:
+        super().__init__(
+            r'(^| )(وال|بال|فال|كال|لل|ال|و|ف|ب|ل|ك)?[أإآ]', r'\1\2ا', p
+            )
+
+
+class TaMarbutaToHa(ProbabilisticReplacer):
+    """Word-final ta marbuta written as ha: الجامعة -> الجامعه."""
+
+    def __init__(self, p: float) -> None:
+        super().__init__(r'ة(?= |$)', 'ه', p)
+
+
+class AlefMaqsuraToYa(ProbabilisticReplacer):
+    """Word-final alef maqsura written as ya: على -> علي, إلى -> إلي."""
+
+    def __init__(self, p: float) -> None:
+        super().__init__(r'ى(?= |$)', 'ي', p)
+
+
+class HamzaSeatDropper(IProcess):
+    """Hamza seat dropped: السؤال -> السوال, النتائج -> النتايج (ئ after alef)."""
+
+    def __init__(self, p: float) -> None:
+        super().__init__()
+        self.replacers = [
+            ProbabilisticReplacer('ؤ', 'و', p),
+            ProbabilisticReplacer('(?<=ا)ئ', 'ي', p)
+        ]
+
+    def execute(self, line: str) -> str:
+        for replacer in self.replacers:
+            line = replacer.execute(line)
+        return line
+
+
+class ZahToDad(ProbabilisticReplacer):
+    """Zah written as dad: نظام -> نضام."""
+
+    def __init__(self, p: float) -> None:
+        super().__init__('ظ', 'ض', p)
