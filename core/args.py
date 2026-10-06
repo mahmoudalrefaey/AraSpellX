@@ -1,4 +1,4 @@
-from argparse import ArgumentParser
+from argparse import ArgumentParser, BooleanOptionalAction
 import torch
 
 
@@ -46,6 +46,12 @@ def add_model_args(parser) -> None:
     group.add_argument(
         '--model', default='transformer', type=str,
         help='The model architecture, transformer'
+    )
+    group.add_argument(
+        '--mask_padding', default=True, action=BooleanOptionalAction,
+        help='Mask padded encoder positions in encoder self-attention and '
+             'decoder cross-attention. Checkpoints saved without this flag '
+             'were trained without padding masks and are loaded with it off.'
     )
 
 
@@ -287,12 +293,14 @@ def get_transformer_args(
         args, voc_size: int, rank: int, pad_idx: int
         ) -> dict:
 
+    mask_padding = getattr(args, 'mask_padding', False)
     enc_params = {
         'n_layers': args.n_layers,
         'voc_size': voc_size,
         'hidden_size': args.hidden_size,
         'p_dropout': args.p_dropout,
-        'pad_idx': pad_idx
+        'pad_idx': pad_idx,
+        'mask_padding': mask_padding
     }
     params = {
         'd_model': args.d_model,
@@ -305,7 +313,8 @@ def get_transformer_args(
         'p_dropout': args.p_dropout,
         'hidden_size': args.hidden_size,
         'voc_size': voc_size,
-        'pad_idx': pad_idx
+        'pad_idx': pad_idx,
+        'mask_padding': mask_padding
     }
 
     return {

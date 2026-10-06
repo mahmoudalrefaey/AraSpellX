@@ -43,7 +43,8 @@ class DistTrainer:
             mixed_precision: bool = False,
             grad_accum_steps: int = 1,
             ckpt_interval_steps: int = 5000,
-            max_checkpoints: int = 5
+            max_checkpoints: int = 5,
+            mask_padding: bool = False
             ) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError('CUDA is required for training, but CUDA is not available on this machine.')
@@ -74,6 +75,7 @@ class DistTrainer:
         self.grad_accum_steps = max(1, grad_accum_steps)
         self.ckpt_interval_steps = ckpt_interval_steps
         self.max_checkpoints = max_checkpoints
+        self.mask_padding = mask_padding
 
         self.logger.set_rank(self.rank)
         if ckpt is not None:
@@ -89,6 +91,14 @@ class DistTrainer:
         }
         self.model.load_state_dict(model_state)
         self.optimizer.load_state_dict(state['optimizer'], state.get('steps', 0))
+
+        ckpt_mask_padding = state.get('mask_padding', False)
+        if ckpt_mask_padding != self.mask_padding:
+            print(
+                f"WARNING: '{ckpt_path}' was trained with mask_padding="
+                f"{ckpt_mask_padding}, but this run uses mask_padding="
+                f"{self.mask_padding}. The attention layout changes on resume."
+            )
 
         epoch = state['epoch']
 
@@ -180,6 +190,7 @@ class DistTrainer:
             'optimizer': self.optimizer.state_dict(),
             'steps': self.optimizer.counter,
             'scaler': self.scaler.state_dict() if self.scaler else None,
+            'mask_padding': self.mask_padding,
             # --- resume bookkeeping ---
             'global_step': self.global_step,
             'epoch_step': self.epoch_step,
@@ -386,7 +397,8 @@ def get_trainer(rank: int, args):
         mixed_precision=getattr(args, 'mixed_precision', False),
         grad_accum_steps=getattr(args, 'grad_accum_steps', 1),
         ckpt_interval_steps=getattr(args, 'ckpt_interval_steps', 5000),
-        max_checkpoints=getattr(args, 'max_checkpoints', 5)
+        max_checkpoints=getattr(args, 'max_checkpoints', 5),
+        mask_padding=getattr(args, 'mask_padding', False)
     )
 
 

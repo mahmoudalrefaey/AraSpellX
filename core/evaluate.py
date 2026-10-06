@@ -272,11 +272,12 @@ class Evaluator:
         return results
 
 
-def load_checkpoint(checkpoint_path: str, model: Module, device: torch.device) -> Dict[str, Any]:
+def load_checkpoint(checkpoint_path: str, model: Module, device: torch.device, state=None) -> Dict[str, Any]:
     """Load model checkpoint."""
     print(f"Loading checkpoint from {checkpoint_path}...")
-    state = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    
+    if state is None:
+        state = torch.load(checkpoint_path, map_location=device, weights_only=False)
+
     model_state = {
         key.replace('module.', ''): value
         for key, value in state['model'].items()
@@ -303,15 +304,21 @@ def run_evaluation(args) -> Dict[str, Any]:
     vocab_size = tokenizer.vocab_size
     pad_idx = tokenizer.special_tokens.pad_id
     
+    if args.checkpoint is None:
+        raise ValueError("Checkpoint path must be provided via --checkpoint")
+    state = torch.load(args.checkpoint, map_location=device, weights_only=False)
+
+    # The checkpoint decides whether padding masks are used: checkpoints
+    # saved before the flag existed were trained without them.
+    args.mask_padding = state.get('mask_padding', False)
+    print(f"Padding masks: {args.mask_padding}")
+
     # Create model
     model = get_model(args, 0, vocab_size, pad_idx)
     model.to(device)
-    
+
     # Load checkpoint
-    if args.checkpoint is None:
-        raise ValueError("Checkpoint path must be provided via --checkpoint")
-    
-    load_checkpoint(args.checkpoint, model, device)
+    load_checkpoint(args.checkpoint, model, device, state=state)
     
     # Load test data
     test_loader = get_test_loader(

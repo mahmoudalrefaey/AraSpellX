@@ -122,10 +122,12 @@ class MultiHeadAtt(nn.Module):
 
         if mask is not None:
             attn_mask = self._prepare_mask_for_sdpa(mask, tq, tk, b, self.h)
-        elif query_mask is not None and key_mask is not None:
-            q_mask = self._prepare_mask_for_sdpa(query_mask, tq, tk, b, self.h, is_query_mask=True)
-            k_mask = self._prepare_mask_for_sdpa(key_mask, tq, tk, b, self.h, is_query_mask=False)
-            attn_mask = q_mask & k_mask
+        elif key_mask is not None:
+            # Key-only masking: no query may attend to padded keys.
+            attn_mask = self._prepare_mask_for_sdpa(key_mask, tq, tk, b, self.h, is_query_mask=False)
+            if query_mask is not None:
+                q_mask = self._prepare_mask_for_sdpa(query_mask, tq, tk, b, self.h, is_query_mask=True)
+                attn_mask = q_mask & attn_mask
 
         attn_output = F.scaled_dot_product_attention(
             Q, K, V,
@@ -258,7 +260,8 @@ class EncoderLayer(nn.Module):
             h: int,
             hidden_size: int,
             p_dropout: float,
-            device: str
+            device: str,
+            mask_padding: bool = False
             ) -> None:
         super().__init__()
         self.mhsa = MultiHeadAtt(
@@ -274,9 +277,13 @@ class EncoderLayer(nn.Module):
             p_dropout=p_dropout
         )
         self.ff_add_and_norm = AddAndNorm(d_model=d_model)
+        # Checkpoints trained before padding masks existed attend to padding;
+        # they must keep mask_padding=False to reproduce their training.
+        self.mask_padding = mask_padding
 
     def forward(self, x: Tensor, mask: Union[Tensor, None], need_weights: bool = False) -> Tensor:
-        _, out = self.mhsa(x, x, x, key_mask=mask, need_weights=need_weights)
+        key_mask = mask if self.mask_padding else None
+        _, out = self.mhsa(x, x, x, key_mask=key_mask, need_weights=need_weights)
         out = self.mhsa_add_and_norm(x, out)
         ff_out = self.ff(out)
         out = self.ff_add_and_norm(out, ff_out)
@@ -290,9 +297,11 @@ class DecoderLayer(nn.Module):
             h: int,
             p_dropout: float,
             hidden_size: int,
-            device: str
+            device: str,
+            mask_padding: bool = False
             ) -> None:
         super().__init__()
+        self.mask_padding = mask_padding
         self.mhsa = MultiHeadSelfAtt(
             d_model=d_model,
             h=h,
@@ -329,7 +338,7 @@ class DecoderLayer(nn.Module):
             query=out_1,
             key=encoder_values,
             value=encoder_values,
-            key_mask=key_mask,
+            key_mask=key_mask if self.mask_padding else None,
             need_weights=need_weights
             )
         out = self.add_and_norm_2(out_1, out)
@@ -379,7 +388,8 @@ class EncoderLayers(nn.Module):
             h: int,
             p_dropout: float,
             pad_idx: int,
-            device: str
+            device: str,
+            mask_padding: bool = False
             ) -> None:
         super().__init__()
         self.emb = PositionalEmb(
@@ -394,7 +404,8 @@ class EncoderLayers(nn.Module):
                 h=h,
                 hidden_size=hidden_size,
                 p_dropout=p_dropout,
-                device=device
+                device=device,
+                mask_padding=mask_padding
             )
             for _ in range(n_layers)
         ])
@@ -418,7 +429,8 @@ class DecoderLayers(nn.Module):
             p_dropout: float,
             hidden_size: int,
             pad_idx: int,
-            device: str
+            device: str,
+            mask_padding: bool = False
             ) -> None:
         super().__init__()
         self.emb = PositionalEmb(
@@ -433,7 +445,8 @@ class DecoderLayers(nn.Module):
                 h=h,
                 p_dropout=p_dropout,
                 hidden_size=hidden_size,
-                device=device
+                device=device,
+                mask_padding=mask_padding
             )
             for _ in range(n_layers)
         ])
