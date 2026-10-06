@@ -194,7 +194,8 @@ def add_training_args(parser) -> None:
     )
     group.add_argument(
         '--max_checkpoints', default=5, type=int,
-        help='Maximum checkpoints to keep in rotation (default: 5)'
+        help='Maximum mid-epoch checkpoints to keep in rotation (default: 5); '
+             'end-of-epoch checkpoints are always kept'
     )
 
 

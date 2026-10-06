@@ -207,9 +207,29 @@ class DistTrainer:
         files = sorted(glob.glob(str(pattern)), key=os.path.getmtime)
         return [Path(f) for f in files]
 
+    @staticmethod
+    def _is_mid_epoch_checkpoint(path: Path) -> bool:
+        """True only for checkpoints saved mid-epoch by this trainer.
+
+        mmap=True reads the metadata without loading the weights. Checkpoints
+        without the flag (older trainers) or that fail to load are kept.
+        """
+        try:
+            state = torch.load(path, map_location='cpu', mmap=True, weights_only=False)
+        except Exception as e:
+            print(f'Warning: could not read {path} ({e}), keeping it.')
+            return False
+        return state.get('epoch_complete') is False
+
     def _cleanup_old_checkpoints(self) -> None:
-        """Remove oldest checkpoints if we exceed max_checkpoints."""
-        checkpoint_files = self._get_checkpoint_files()
+        """Remove the oldest mid-epoch checkpoints beyond max_checkpoints.
+
+        End-of-epoch checkpoints are never removed.
+        """
+        checkpoint_files = [
+            path for path in self._get_checkpoint_files()
+            if self._is_mid_epoch_checkpoint(path)
+        ]
         while len(checkpoint_files) > self.max_checkpoints:
             oldest = checkpoint_files.pop(0)
             try:
