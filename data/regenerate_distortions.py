@@ -48,8 +48,9 @@ def get_argparser():
         help='Probability that a used habit is applied to each of its matches'
     )
     parser.add_argument(
-        '--typo_ratios', default=[0.0, 0.02, 0.05, 0.1], nargs='+', type=float,
-        help='Typo ratios, one is drawn per sentence'
+        '--typo_ratios', default=[0.0, 0.1, 0.15, 0.15], nargs='+', type=float,
+        help='Typo ratios, one is drawn per sentence (0 keeps a share of '
+             'typo-free sentences; the default matches the typo volume of distorted_0.1)'
     )
     parser.add_argument(
         '--max_len', default=128, type=int,

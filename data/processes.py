@@ -331,13 +331,16 @@ class AlefMaqsuraToYa(ProbabilisticReplacer):
 
 
 class HamzaSeatDropper(IProcess):
-    """Hamza seat dropped: السؤال -> السوال, النتائج -> النتايج (ئ after alef)."""
+    """Hamza seat errors: السؤال -> السوال, النتائج -> النتايج (ئ after alef),
+    كفاءة -> كفائة (ء after alef, inside a word, written on a ya seat)."""
 
     def __init__(self, p: float) -> None:
         super().__init__()
+        # ء -> ئ runs last so the ئ it creates is never turned into ي.
         self.replacers = [
             ProbabilisticReplacer('ؤ', 'و', p),
-            ProbabilisticReplacer('(?<=ا)ئ', 'ي', p)
+            ProbabilisticReplacer('(?<=ا)ئ', 'ي', p),
+            ProbabilisticReplacer(r'(?<=ا)ء(?=\S)', 'ئ', p)
         ]
 
     def execute(self, line: str) -> str:
@@ -351,3 +354,10 @@ class ZahToDad(ProbabilisticReplacer):
 
     def __init__(self, p: float) -> None:
         super().__init__('ظ', 'ض', p)
+
+
+class AlefFariqaDropper(ProbabilisticReplacer):
+    """Alef after a word-final waw dropped: قاموا -> قامو, يتمكنوا -> يتمكنو."""
+
+    def __init__(self, p: float) -> None:
+        super().__init__('وا(?= |$)', 'و', p)

@@ -5,6 +5,7 @@ import random
 from typing import Union, Any, List
 from core.interfaces import IProcess, IProcessor
 from data.processes import (
+    AlefFariqaDropper,
     AlefMaqsuraToYa,
     HamzaAlefDropper,
     HamzaSeatDropper,
@@ -117,8 +118,8 @@ class RealWorldDistorter(IProcessor):
     Real writers apply a spelling habit consistently across a sentence, so
     each habit is switched on per sentence with probability habit_prob and
     then applied to its matches (see the habit's own probability). The typo
-    ratio is drawn per sentence from typo_ratios, so the model also sees
-    lightly distorted and typo-free inputs.
+    ratio is drawn per sentence from typo_ratios: a 0 entry keeps a share of
+    typo-free sentences, the others keep the typo volume of distorted_0.1.
     """
     def __init__(
             self,
@@ -166,7 +167,8 @@ def get_habits(apply_prob: float) -> List[IProcess]:
         TaMarbutaToHa(apply_prob),
         AlefMaqsuraToYa(apply_prob),
         HamzaSeatDropper(apply_prob),
-        ZahToDad(apply_prob)
+        ZahToDad(apply_prob),
+        AlefFariqaDropper(apply_prob)
     ]
 
 
@@ -180,7 +182,7 @@ def get_text_distorter(ratio):
 def get_real_world_distorter(
         habit_prob: float = 0.5,
         apply_prob: float = 0.9,
-        typo_ratios: List[float] = (0.0, 0.02, 0.05, 0.1)
+        typo_ratios: List[float] = (0.0, 0.1, 0.15, 0.15)
         ) -> RealWorldDistorter:
     return RealWorldDistorter(
         habits=get_habits(apply_prob),
