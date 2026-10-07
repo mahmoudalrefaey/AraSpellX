@@ -2,7 +2,7 @@
 
 Parameter names, shapes and computations follow Hugging Face's
 `BertForTokenClassification` and `BertForMaskedLM` exactly (post-norm
-layers, erf GELU, learned absolute positions, a single segment type), so
+layers, erf GELU, learned absolute or relative positions, a single segment type), so
 checkpoints saved here load into those classes without custom code, and
 their checkpoints load here. `tests/test_bert.py` checks this numerically.
 """
@@ -19,6 +19,7 @@ from torch.nn import functional as F
 from transformers import BertConfig
 
 PathLike = Union[str, Path]
+RELATIVE = ("relative_key", "relative_key_query")
 
 
 class Embeddings(nn.Module):
@@ -33,13 +34,13 @@ class Embeddings(nn.Module):
         self.register_buffer(
             "position_ids", torch.arange(config.max_position_embeddings).unsqueeze(0), persistent=False)
 
+        # With relative positions the absolute table is kept (Hugging Face keeps it too) but unused.
+        self.absolute = getattr(config, "position_embedding_type", "absolute") == "absolute"
+
     def forward(self, input_ids: Tensor) -> Tensor:
-        positions = self.position_ids[:, :input_ids.shape[1]]
-        embeddings = (
-            self.word_embeddings(input_ids)
-            + self.token_type_embeddings(torch.zeros_like(input_ids))
-            + self.position_embeddings(positions)
-        )
+        embeddings = self.word_embeddings(input_ids) + self.token_type_embeddings(torch.zeros_like(input_ids))
+        if self.absolute:
+            embeddings = embeddings + self.position_embeddings(self.position_ids[:, :input_ids.shape[1]])
         return self.dropout(self.LayerNorm(embeddings))
 
 
@@ -52,20 +53,53 @@ class SelfAttention(nn.Module):
         self.key = nn.Linear(config.hidden_size, config.hidden_size)
         self.value = nn.Linear(config.hidden_size, config.hidden_size)
         self.dropout_p = config.attention_probs_dropout_prob
+        self.position_type = getattr(config, "position_embedding_type", "absolute")
+        if self.position_type in RELATIVE:
+            self.max_positions = config.max_position_embeddings
+            self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.head_size)
 
     def _split_heads(self, x: Tensor) -> Tensor:
         batch, length, _ = x.shape
         return x.view(batch, length, self.heads, self.head_size).transpose(1, 2)
 
+    def _relative_scores(self, query: Tensor, key: Tensor) -> Tensor:
+        """Scores from the distance between positions, scaled like the attention scores.
+
+        relative_key: query . d(i - j); relative_key_query adds key . d(i - j),
+        where d is a learned embedding of the distance (Hugging Face's formulation).
+        """
+        length = query.shape[2]
+        # Embeddings of the distances -(length - 1) .. length - 1 (row k is distance k - length + 1).
+        start = self.max_positions - length
+        table = self.distance_embedding.weight[start:start + 2 * length - 1].to(query.dtype)
+        # Score every vector against every distance once, then read distance i - j for each pair.
+        scores = _diagonals(query @ table.flip(0).T)  # query_i . d(i - j)
+        if self.position_type == "relative_key_query":
+            scores = scores + _diagonals(key @ table.T).transpose(-1, -2)  # key_j . d(i - j)
+        return scores / math.sqrt(self.head_size)
+
     def forward(self, hidden: Tensor, additive_mask: Tensor) -> Tensor:
         query, key, value = (self._split_heads(f(hidden)) for f in (self.query, self.key, self.value))
+        if self.position_type in RELATIVE:
+            additive_mask = additive_mask.to(query.dtype) + self._relative_scores(query, key)
         context = F.scaled_dot_product_attention(
             query, key, value, attn_mask=additive_mask,
             dropout_p=self.dropout_p if self.training else 0.0,
-            scale=1.0 / math.sqrt(self.head_size),
         )
         batch, _, length, _ = context.shape
         return context.transpose(1, 2).reshape(batch, length, self.heads * self.head_size)
+
+
+def _diagonals(scores: Tensor) -> Tensor:
+    """(..., L, 2L - 1) -> (..., L, L) with out[i, j] = scores[i, L - 1 - i + j].
+
+    Element (i, j) sits at flat offset (L - 1) + i * (2L - 2) + j of each
+    (L, 2L - 1) matrix, so a slice and two reshapes pick all of them out
+    (a view in PyTorch, and plain Slice/Reshape operators in ONNX).
+    """
+    *lead, length, width = scores.shape
+    flat = scores.reshape(*lead, length * width)[..., length - 1:length - 1 + length * (width - 1)]
+    return flat.reshape(*lead, length, width - 1)[..., :length]
 
 
 class AddNorm(nn.Module):
@@ -251,8 +285,14 @@ class BertForMaskedLM(_Pretrained):
 
 
 def make_config(vocab_size: int, num_labels: int = 2, layers: int = 8, hidden: int = 384,
-                max_positions: int = 512, pad_token_id: int = 0, **kwargs) -> BertConfig:
-    """BERT configuration for AraSpellX (default: the size fixed by the CPU speed test)."""
+                max_positions: int = 512, pad_token_id: int = 0,
+                position_embedding_type: str = "relative_key", **kwargs) -> BertConfig:
+    """BERT configuration for AraSpellX (default: the size fixed by the CPU speed test).
+
+    Positions are relative (attention sees the distance between characters):
+    with absolute positions a character-level masked LM can stay stuck
+    predicting character frequencies, never learning to look at neighbours.
+    """
     return BertConfig(
         vocab_size=vocab_size,
         hidden_size=hidden,
@@ -263,5 +303,6 @@ def make_config(vocab_size: int, num_labels: int = 2, layers: int = 8, hidden: i
         type_vocab_size=1,
         pad_token_id=pad_token_id,
         num_labels=num_labels,
+        position_embedding_type=position_embedding_type,
         **kwargs,
     )

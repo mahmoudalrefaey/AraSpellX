@@ -1,15 +1,17 @@
 """Our BERT must be numerically identical to Hugging Face's classes."""
+import pytest
 import torch
 import transformers
 
 from araspellx.model.bert import BertForMaskedLM, BertForTokenClassification, make_config
 
 ATOL = 1e-5
+POSITIONS = ["absolute", "relative_key", "relative_key_query"]
 
 
-def _config(**kwargs):
-    return make_config(vocab_size=120, num_labels=7, layers=2, hidden=128,
-                       max_positions=64, attn_implementation="eager", **kwargs)
+def _config(positions="relative_key", **kwargs):
+    return make_config(vocab_size=120, num_labels=7, layers=2, hidden=128, max_positions=64,
+                       position_embedding_type=positions, attn_implementation="eager", **kwargs)
 
 
 def _batch():
@@ -22,10 +24,11 @@ def _batch():
     return ids, mask
 
 
-def test_token_classification_matches_hugging_face():
+@pytest.mark.parametrize("positions", POSITIONS)
+def test_token_classification_matches_hugging_face(positions):
     torch.manual_seed(1)
-    hf = transformers.BertForTokenClassification(_config()).eval()
-    ours = BertForTokenClassification(_config()).eval()
+    hf = transformers.BertForTokenClassification(_config(positions)).eval()
+    ours = BertForTokenClassification(_config(positions)).eval()
     ours.load_hf_state_dict(hf.state_dict())
     ids, mask = _batch()
     with torch.no_grad():
@@ -35,10 +38,11 @@ def test_token_classification_matches_hugging_face():
     assert torch.allclose(actual[real], expected[real], atol=ATOL)
 
 
-def test_masked_lm_matches_hugging_face():
+@pytest.mark.parametrize("positions", POSITIONS)
+def test_masked_lm_matches_hugging_face(positions):
     torch.manual_seed(2)
-    hf = transformers.BertForMaskedLM(_config()).eval()
-    ours = BertForMaskedLM(_config()).eval()
+    hf = transformers.BertForMaskedLM(_config(positions)).eval()
+    ours = BertForMaskedLM(_config(positions)).eval()
     ours.load_hf_state_dict(hf.state_dict())
     ids, mask = _batch()
     with torch.no_grad():
@@ -49,11 +53,12 @@ def test_masked_lm_matches_hugging_face():
     assert ours.cls.predictions.decoder.weight is ours.bert.embeddings.word_embeddings.weight
 
 
-def test_our_checkpoints_load_in_hugging_face(tmp_path):
+@pytest.mark.parametrize("positions", POSITIONS)
+def test_our_checkpoints_load_in_hugging_face(tmp_path, positions):
     torch.manual_seed(3)
     for ours, hf_class in [
-        (BertForTokenClassification(_config()), transformers.BertForTokenClassification),
-        (BertForMaskedLM(_config()), transformers.BertForMaskedLM),
+        (BertForTokenClassification(_config(positions)), transformers.BertForTokenClassification),
+        (BertForMaskedLM(_config(positions)), transformers.BertForMaskedLM),
     ]:
         ours.eval().save_pretrained(tmp_path / ours.architecture)
         hf = hf_class.from_pretrained(tmp_path / ours.architecture, attn_implementation="eager").eval()
@@ -75,4 +80,5 @@ def test_training_step_runs():
     loss = torch.nn.functional.cross_entropy(logits[mask.bool()], labels[mask.bool()])
     loss.backward()
     assert torch.isfinite(loss)
-    assert all(p.grad is not None for p in model.parameters() if p.requires_grad)
+    unused = {"bert.embeddings.position_embeddings.weight"}  # the absolute table, kept for compatibility
+    assert all(p.grad is not None for n, p in model.named_parameters() if n not in unused)

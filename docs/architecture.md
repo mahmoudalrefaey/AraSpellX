@@ -10,16 +10,21 @@ Input: raw text, any length, any Unicode. Output: corrected text plus a list of 
 - **Tokenizer** (`araspellx/text/tokenizer.py`): one token per character, a standard `PreTrainedTokenizerFast` (loadable with `AutoTokenizer`) with exact character offsets.
 
 ## Model
-- Our own implementation of a BERT encoder (`araspellx/model/bert.py`): post-norm layers, GELU, learned absolute positions. Parameter names, shapes and computations match Hugging Face's `BertForMaskedLM` and `BertForTokenClassification`; `tests/test_bert.py` checks outputs agree within 1e-5 and that checkpoints load in both directions.
-- Size: 8 layers, hidden size 384, 6 heads, feed-forward 1536, 512 positions, 14.6M parameters. Chosen as the largest size that meets the CPU speed target with refinement passes (`araspellx/eval/speed.py`, 4 threads, i5-10500H, ONNX int8):
+- Our own implementation of a BERT encoder (`araspellx/model/bert.py`): post-norm layers, GELU, relative positions. Parameter names, shapes and computations match Hugging Face's `BertForMaskedLM` and `BertForTokenClassification`; `tests/test_bert.py` checks outputs agree within 1e-5 and that checkpoints load in both directions.
+- **Relative positions** (Hugging Face's `position_embedding_type="relative_key"`): each attention score gets a learned term for the distance between the two characters. With BERT's usual absolute positions, character-level masked-LM pretraining stalled: the model learned only character frequencies and never learned to look at neighbouring characters (on real text, and on a toy task where every masked letter is given away by its neighbour). With relative distances it learns this within the first ~1,000 steps.
+- Size: 8 layers, hidden size 384, 6 heads, feed-forward 1536, 512 positions, 15.1M parameters. Chosen by the CPU speed benchmark (`araspellx/eval/speed.py`, our exported model, 4 threads, i5-10500H, ONNX):
 
-  | Layers × hidden | Parameters | Words/s (fp32) | Words/s (int8) |
-  |---|---|---|---|
-  | 6 × 384 | 11.0M | 699 | 954 |
-  | **8 × 384** | **14.6M** | **491** | **746** |
-  | 12 × 384 | 21.7M | 360 | 492 |
-  | 6 × 512 | 19.4M | 460 | 628 |
-  | 8 × 512 | 25.7M | 331 | 499 |
+  | Layers × hidden | Positions | Parameters | Words/s (fp32) | Words/s (int8) |
+  |---|---|---|---|---|
+  | 6 × 384 | absolute | 11.0M | 699 | 954 |
+  | 8 × 384 | absolute | 14.6M | 491 | 746 |
+  | **8 × 384** | **relative_key** | **15.1M** | **337** | **410** |
+  | 8 × 384 | relative_key_query | 15.1M | 245 | 268 |
+  | 12 × 384 | absolute | 21.7M | 360 | 492 |
+  | 6 × 512 | absolute | 19.4M | 460 | 628 |
+  | 8 × 512 | absolute | 25.7M | 331 | 499 |
+
+  The released checkpoints also load in plain `transformers`, whose relative-position code is slower on CPU; the helper package runs the faster ONNX export.
 
 ## Edit labels
 Each input character gets one label (`araspellx/data/labels.py`):
@@ -34,7 +39,7 @@ Each input character gets one label (`araspellx/data/labels.py`):
 The `[CLS]` token carries insertions before the first character. Labels are derived by aligning noisy and clean text character by character; the label set (about 160 labels) is the most frequent edits covering 99.5% of training edits. Why labels rather than generating the corrected text: one pass instead of one decoder step per character, correct text kept by default, and native offsets and confidences.
 
 ## Training
-1. **Pretraining** (`araspellx/train/pretrain.py`): masked character prediction on Wikimedia text, 15% of characters per 512-token window, half as whole words and half as 1–5 character spans.
+1. **Pretraining** (`araspellx/train/pretrain.py`): masked character prediction on Wikimedia text, 15% of the characters of each window, half as whole words and half as 1–5 character spans. As in the original BERT, the first 90% of steps use short windows (128 characters) and the rest full 512-character windows; every step sees 16,384 characters.
 2. **Correction** (`araspellx/train/correct.py`): the pretrained encoder plus a label classifier, trained on a mixture of clean text, typed-error noise and OCR pairs (see [data](data.md)).
 
 ## Decoding

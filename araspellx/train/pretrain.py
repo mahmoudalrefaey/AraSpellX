@@ -1,14 +1,17 @@
 """Pretrain AraSpellX's character encoder with masked character prediction.
 
 Reads the token stream from data/pretrain_corpus.py, masks 15% of the
-characters of each 512-token window (half as whole words, half as random
-1-5 character spans) and trains BertForMaskedLM to restore them. Saves a
-full checkpoint every --ckpt_minutes; rerunning the same command resumes.
+characters of each window (half as whole words, half as random 1-5
+character spans) and trains BertForMaskedLM to restore them. The first
+--short_fraction of the steps use 128-character windows, the rest 512.
+Saves a full checkpoint every --ckpt_minutes; rerunning the same command
+resumes.
 
-Short check run (~5 minutes), then the full run:
+Short check run (~15 minutes on an RTX 3060 laptop GPU; validation
+accuracy should climb past ~0.30), then the full run (~9 hours):
 
-    python -m araspellx.train.pretrain --out artifacts/pretrain_check --max_steps 600 --eval_every 200
-    python -m araspellx.train.pretrain --out artifacts/pretrain --max_steps 40000
+    python -m araspellx.train.pretrain --out artifacts/pretrain_check --max_steps 2000 --eval_every 500
+    python -m araspellx.train.pretrain --out artifacts/pretrain --max_steps 80000
 """
 from __future__ import annotations
 
@@ -28,8 +31,7 @@ from araspellx.text.charset import ARABIC, ARABIC_LETTERS, CLS, DIACRITICS, MASK
 from araspellx.text.tokenizer import build_tokenizer, encode_chars
 from araspellx.train.progress import Prefetcher, Progress, gpu_memory_gb, precision_settings
 
-WINDOW = 512
-CONTENT = WINDOW - 2
+WINDOW = 512  # the longest window: the model's positions
 LETTER_IDS = np.array([TOKEN_TO_ID[c] for c in ARABIC_LETTERS])  # random replacements
 IS_LETTER = np.zeros(len(VOCAB), dtype=bool)
 IS_LETTER[[TOKEN_TO_ID[c] for c in ARABIC | set(DIACRITICS) if c in TOKEN_TO_ID]] = True
@@ -70,17 +72,18 @@ def mask_window(ids: np.ndarray, rng: np.random.Generator, rate: float = 0.15):
 
 
 class Windows:
-    """Random 512-token windows from a uint8 token stream on disk."""
+    """Random windows ([CLS] text [SEP]) from a uint8 token stream on disk."""
 
     def __init__(self, path: Path, seed: int) -> None:
         self.data = np.memmap(path, dtype=np.uint8, mode="r")
         self.rng = np.random.default_rng(seed)
 
-    def batch(self, size: int):
+    def batch(self, size: int, length: int = WINDOW):
+        content = length - 2
         inputs, labels = [], []
         for _ in range(size):
-            start = self.rng.integers(0, len(self.data) - CONTENT)
-            chunk = np.asarray(self.data[start:start + CONTENT], dtype=np.int64)
+            start = self.rng.integers(0, len(self.data) - content)
+            chunk = np.asarray(self.data[start:start + content], dtype=np.int64)
             x, y = mask_window(chunk, self.rng)
             inputs.append(np.concatenate([[TOKEN_TO_ID[CLS]], x, [TOKEN_TO_ID[SEP]]]))
             labels.append(np.concatenate([[-100], y, [-100]]))
@@ -131,7 +134,8 @@ def main():
     parser.add_argument("--data", type=Path, default=Path("data/v1/pretrain"))
     parser.add_argument("--out", type=Path, default=Path("artifacts/pretrain"))
     parser.add_argument("--max_steps", type=int, default=40000)
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=32,
+                        help="characters per step, in 512-character windows (32: 16,384 characters)")
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--warmup", type=int, default=2000)
     parser.add_argument("--layers", type=int, default=8)
@@ -141,6 +145,9 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--precision", choices=["auto", "bf16", "fp16", "fp32"], default="auto",
                         help="auto: bf16 on GPUs that support it (RTX 30xx, A100), else fp16 (T4, V100)")
+    parser.add_argument("--short_window", type=int, default=128,
+                        help="window length for the first --short_fraction of the steps (0: full windows throughout)")
+    parser.add_argument("--short_fraction", type=float, default=0.9)
     args = parser.parse_args()
 
     device = torch.device("cuda")
@@ -155,8 +162,20 @@ def main():
     optimizer = torch.optim.AdamW([{"params": decay, "weight_decay": 0.01},
                                    {"params": no_decay, "weight_decay": 0.0}],
                                   lr=args.lr, betas=(0.9, 0.98), eps=1e-6)
+    # Short windows first (as in the original BERT), then full windows; every step
+    # sees the same number of characters.
+    short_steps = int(args.short_fraction * args.max_steps) if args.short_window else 0
+
+    def window_at(s: int) -> int:
+        return args.short_window if s < short_steps else WINDOW
+
+    def windows_per_batch(window: int) -> int:
+        return args.batch_size * WINDOW // window
+
     train = Windows(args.data / "train.bin", args.seed)
-    valid_batches = [Windows(args.data / "valid.bin", 1234).batch(args.batch_size) for _ in range(8)]
+    valid = Windows(args.data / "valid.bin", 1234)
+    valid_batches = {w: [valid.batch(windows_per_batch(w), w) for _ in range(8)]
+                     for w in sorted({window_at(0), WINDOW})}
 
     step = 0
     ckpt = args.out / "last.pt"
@@ -182,15 +201,32 @@ def main():
         progress.log(f"checkpoint saved at step {step}")
 
     params = sum(p.numel() for p in model.parameters())
+    plan = (f"{args.short_window}-character windows until step {short_steps}, then {WINDOW}"
+            if short_steps else f"{WINDOW}-character windows")
     progress.log(f"{params / 1e6:.1f}M parameters | {len(train.data) / 1e6:,.0f}M training characters | "
-                 f"{args.max_steps} steps x {args.batch_size} windows | precision {precision} | "
+                 f"{args.max_steps} steps x {args.batch_size * WINDOW:,} characters | {plan} | "
+                 f"{config.position_embedding_type} positions | precision {precision} | "
                  f"GPU {torch.cuda.get_device_name()}")
     writer = SummaryWriter(args.out / "logs")
-    batches = Prefetcher(lambda: train.batch(args.batch_size))
+
+    def batch_source(first_step: int):
+        next_step = first_step  # batches are produced in step order
+
+        def make():
+            nonlocal next_step
+            window = window_at(next_step)
+            next_step += 1
+            return train.batch(windows_per_batch(window), window)
+        return make
+
+    batches = Prefetcher(batch_source(step))
     last_ckpt = started = time.time()
-    start_step, loss_avg, acc_avg, metrics = step, None, None, {}
+    start_step, loss_avg, acc_avg, metrics, chars_seen = step, None, None, {}, 0
     while step < args.max_steps:
+        if short_steps and step == short_steps:
+            progress.log(f"switching to {WINDOW}-character windows")
         inputs, labels = batches.next()
+        chars_seen += inputs.numel()
         inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
         lr = learning_rate(step, args.lr, args.warmup, args.max_steps)
         for group in optimizer.param_groups:
@@ -217,7 +253,7 @@ def main():
             accuracy = (logits[masked].argmax(-1) == labels[masked]).float().mean().item()
             loss_avg = loss.item() if loss_avg is None else 0.9 * loss_avg + 0.1 * loss.item()
             acc_avg = accuracy if acc_avg is None else 0.9 * acc_avg + 0.1 * accuracy
-            chars = (step - start_step) * args.batch_size * CONTENT / (time.time() - started)
+            chars = chars_seen / (time.time() - started)
             metrics = {"loss": loss_avg, "acc": acc_avg, "lr": lr, "char/s": chars, "GPU GB": gpu_memory_gb()}
         progress.step(metrics, write_every=100, step=step)
         if step % 100 == 0 and metrics:
@@ -225,13 +261,15 @@ def main():
             writer.add_scalar("train/masked_accuracy", acc_avg, step)
             writer.add_scalar("train/lr", lr, step)
         if step % args.eval_every == 0 or step == args.max_steps:
-            valid_loss, accuracy = evaluate(model, valid_batches, device, autocast)
-            progress.log(f"eval step {step}: validation loss {valid_loss:.3f} | "
+            window = window_at(step - 1)
+            valid_loss, accuracy = evaluate(model, valid_batches[window], device, autocast)
+            progress.log(f"eval step {step} ({window}-character windows): validation loss {valid_loss:.3f} | "
                          f"masked-character accuracy {accuracy:.3f}\n{fill_examples(model, device)}")
-            writer.add_scalar("valid/loss", valid_loss, step)
-            writer.add_scalar("valid/accuracy", accuracy, step)
+            writer.add_scalar(f"valid{window}/loss", valid_loss, step)
+            writer.add_scalar(f"valid{window}/accuracy", accuracy, step)
             with open(args.out / "eval.jsonl", "a", encoding="utf-8") as f:
-                f.write(json.dumps({"step": step, "valid_loss": valid_loss, "accuracy": accuracy}) + "\n")
+                f.write(json.dumps({"step": step, "window": window, "valid_loss": valid_loss,
+                                    "accuracy": accuracy}) + "\n")
         if time.time() - last_ckpt > args.ckpt_minutes * 60:
             save()
             last_ckpt = time.time()

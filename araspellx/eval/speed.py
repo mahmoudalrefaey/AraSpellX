@@ -58,22 +58,15 @@ def benchmark(session, text: str, vocab_size: int, batch_size: int = 16) -> floa
 
 
 def export_random_model(layers: int, hidden: int, path: Path, vocab_size: int = 300,
-                        num_labels: int = 150) -> int:
-    """Export an untrained BERT token classifier to ONNX; return its parameter count."""
+                        num_labels: int = 150, positions: str = "relative_key") -> int:
+    """Export an untrained token classifier (our implementation, as the helper package
+    runs it) to ONNX; return its parameter count."""
     import torch
-    from transformers import BertConfig, BertForTokenClassification
 
-    config = BertConfig(
-        vocab_size=vocab_size,
-        hidden_size=hidden,
-        num_hidden_layers=layers,
-        num_attention_heads=hidden // 64,
-        intermediate_size=4 * hidden,
-        max_position_embeddings=WINDOW_TOKENS,
-        type_vocab_size=1,
-        num_labels=num_labels,
-        attn_implementation="eager",
-    )
+    from araspellx.model.bert import BertForTokenClassification, make_config
+
+    config = make_config(vocab_size=vocab_size, num_labels=num_labels, layers=layers, hidden=hidden,
+                         max_positions=WINDOW_TOKENS, position_embedding_type=positions)
     model = BertForTokenClassification(config).eval()
     dummy = torch.ones(2, WINDOW_TOKENS, dtype=torch.long)
     torch.onnx.export(
@@ -97,8 +90,7 @@ def load_text(words: int, source: Path) -> str:
             count += len(paragraph.split())
             if count >= words:
                 break
-    return "
-".join(text)
+    return "\n".join(text)
 
 
 def main():
@@ -109,6 +101,8 @@ def main():
     parser.add_argument("--words", type=int, default=20000)
     parser.add_argument("--text", type=Path, default=Path("data/v1/testsets/T7_msa.jsonl"))
     parser.add_argument("--workdir", type=Path, default=Path("artifacts/speed"))
+    parser.add_argument("--positions", default="relative_key",
+                        choices=["absolute", "relative_key", "relative_key_query"])
     args = parser.parse_args()
 
     import onnxruntime as ort
@@ -120,13 +114,13 @@ def main():
     options.intra_op_num_threads = args.threads
     options.inter_op_num_threads = 1
 
-    print(f"{len(text.split())} words, {len(text)} characters, {args.threads} threads")
+    print(f"{len(text.split())} words, {len(text)} characters, {args.threads} threads, {args.positions} positions")
     print(f"{'config':8s} {'params':>8s} {'fp32 w/s':>9s} {'int8 w/s':>9s}")
     for spec in args.configs:
         layers, hidden = map(int, spec.split("x"))
-        fp32 = args.workdir / f"bert_{spec}.onnx"
-        int8 = args.workdir / f"bert_{spec}.int8.onnx"
-        params = export_random_model(layers, hidden, fp32)
+        fp32 = args.workdir / f"bert_{spec}_{args.positions}.onnx"
+        int8 = args.workdir / f"bert_{spec}_{args.positions}.int8.onnx"
+        params = export_random_model(layers, hidden, fp32, positions=args.positions)
         quantize_dynamic(str(fp32), str(int8), weight_type=QuantType.QInt8)
         speeds = []
         for path in (fp32, int8):

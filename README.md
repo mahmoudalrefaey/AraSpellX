@@ -114,8 +114,8 @@ Run the short check first.
 
 ```bash
 # Pretraining (masked characters)
-python -m araspellx.train.pretrain --out artifacts/pretrain_check --max_steps 600 --eval_every 200
-python -m araspellx.train.pretrain --out artifacts/pretrain --max_steps 40000
+python -m araspellx.train.pretrain --out artifacts/pretrain_check --max_steps 2000 --eval_every 500
+python -m araspellx.train.pretrain --out artifacts/pretrain --max_steps 80000
 
 # Correction (edit labels), starting from the pretrained encoder
 python -m araspellx.train.correct --out artifacts/correct_check --max_steps 600 --eval_every 300
@@ -126,7 +126,7 @@ python -m araspellx.train.correct --out artifacts/correct --max_steps 30000
 
 - [x] Character set, normalization with offset mapping, Hugging Face tokenizer
 - [x] Own BERT implementation, verified identical to Hugging Face's
-- [x] Model size fixed by a CPU speed benchmark (8 layers × 384, 14.6M parameters)
+- [x] Model size fixed by a CPU speed benchmark (8 layers × 384, relative positions, 15.1M parameters)
 - [x] Wikimedia corpus, held-out splits, test-set deduplication
 - [x] Pinned OCR container; real-scan, classical and clean-text test sets
 - [x] Typed-error noise and rendered-OCR training pairs

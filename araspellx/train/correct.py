@@ -94,7 +94,7 @@ def main():
     parser.add_argument("--yarmouk_dev", type=Path, default=Path("data/v1/testsets/yarmouk_dev.jsonl"))
     parser.add_argument("--out", type=Path, default=Path("artifacts/correct"))
     parser.add_argument("--max_steps", type=int, default=30000)
-    parser.add_argument("--batch_size", type=int, default=48)
+    parser.add_argument("--batch_size", type=int, default=32, help="512-character windows per step")
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--warmup", type=int, default=1000)
     parser.add_argument("--eval_every", type=int, default=2000)
