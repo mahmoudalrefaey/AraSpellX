@@ -136,3 +136,6 @@ dmypy.json
 # AraSpellX v1 data 
 data/
 artifacts/
+
+# Model checkpoints
+*.pt

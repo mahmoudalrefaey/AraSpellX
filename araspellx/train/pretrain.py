@@ -4,8 +4,14 @@ Reads the token stream from data/pretrain_corpus.py, masks 15% of the
 characters of each window (half as whole words, half as random 1-5
 character spans) and trains BertForMaskedLM to restore them. The first
 --short_fraction of the steps use 128-character windows, the rest 512.
-Saves a full checkpoint every --ckpt_minutes; rerunning the same command
-resumes.
+
+Safety: every --cap_every steps, heads whose attention scores grow past
+--attention_cap are scaled back (train/stability.py); the model with the
+best validation loss is kept in best_model/ (and best.pt); training stops
+by itself if validation loss gets --stop_worse worse than the best. A full
+checkpoint is saved every --ckpt_minutes; rerunning the same command
+resumes, and --resume_from starts a new output folder from another
+checkpoint.
 
 Short check run (~15 minutes on an RTX 3060 laptop GPU; validation
 accuracy should climb past ~0.30), then the full run (~9 hours):
@@ -18,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 import time
 from pathlib import Path
 
@@ -30,6 +37,7 @@ from araspellx.model.bert import BertForMaskedLM, make_config
 from araspellx.text.charset import ARABIC, ARABIC_LETTERS, CLS, DIACRITICS, MASK, PAD, SEP, TOKEN_TO_ID, VOCAB
 from araspellx.text.tokenizer import build_tokenizer, encode_chars
 from araspellx.train.progress import Prefetcher, Progress, gpu_memory_gb, precision_settings
+from araspellx.train.stability import cap_attention, max_attention_scores
 
 WINDOW = 512  # the longest window: the model's positions
 LETTER_IDS = np.array([TOKEN_TO_ID[c] for c in ARABIC_LETTERS])  # random replacements
@@ -133,7 +141,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--data", type=Path, default=Path("data/v1/pretrain"))
     parser.add_argument("--out", type=Path, default=Path("artifacts/pretrain"))
-    parser.add_argument("--max_steps", type=int, default=40000)
+    parser.add_argument("--max_steps", type=int, default=80000)
     parser.add_argument("--batch_size", type=int, default=32,
                         help="characters per step, in 512-character windows (32: 16,384 characters)")
     parser.add_argument("--lr", type=float, default=5e-4)
@@ -148,6 +156,13 @@ def main():
     parser.add_argument("--short_window", type=int, default=128,
                         help="window length for the first --short_fraction of the steps (0: full windows throughout)")
     parser.add_argument("--short_fraction", type=float, default=0.9)
+    parser.add_argument("--attention_cap", type=float, default=50.0,
+                        help="largest attention score allowed per head (0: no cap)")
+    parser.add_argument("--cap_every", type=int, default=50, help="steps between attention-cap checks")
+    parser.add_argument("--stop_worse", type=float, default=0.10,
+                        help="stop when validation loss is this much worse than the best (0.10 = 10%%)")
+    parser.add_argument("--resume_from", type=Path, default=None,
+                        help="checkpoint to start from when --out has none yet (e.g. a copy of an earlier last.pt)")
     args = parser.parse_args()
 
     device = torch.device("cuda")
@@ -177,10 +192,11 @@ def main():
     valid_batches = {w: [valid.batch(windows_per_batch(w), w) for _ in range(8)]
                      for w in sorted({window_at(0), WINDOW})}
 
-    step = 0
+    step, best = 0, {}  # best: window length -> (validation loss, step)
     ckpt = args.out / "last.pt"
-    if ckpt.exists():
-        state = torch.load(ckpt, map_location=device, weights_only=False)
+    source = ckpt if ckpt.exists() else args.resume_from
+    if source is not None:
+        state = torch.load(source, map_location=device, weights_only=False)
         model.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optimizer"])
         step = state["step"]
@@ -188,17 +204,32 @@ def main():
         torch.set_rng_state(state["torch_rng"].cpu())
         if scaler is not None and state.get("scaler"):
             scaler.load_state_dict(state["scaler"])
+        best = state.get("best", {})
+        del state
 
     progress = Progress(args.max_steps, step, args.out / "train.log", "pretrain")
-    progress.log(f"Resumed from {ckpt} at step {step}" if step else f"Starting at step 0 -> {args.out}")
+    progress.log(f"Resumed from {source} at step {step}" if step else f"Starting at step 0 -> {args.out}")
 
-    def save():
-        partial = ckpt.with_suffix(".partial")
+    def save(path: Path, message: str):
+        partial = path.with_suffix(".partial")
         torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(), "step": step,
                     "data_rng": train.rng.bit_generator.state, "torch_rng": torch.get_rng_state(),
-                    "scaler": scaler.state_dict() if scaler else None, "args": vars(args)}, partial)
-        partial.replace(ckpt)
-        progress.log(f"checkpoint saved at step {step}")
+                    "scaler": scaler.state_dict() if scaler else None, "best": best, "args": vars(args)}, partial)
+        partial.replace(path)
+        progress.log(message)
+
+    # A few validation windows (4,096 characters) on which attention scores are measured.
+    probes = {w: batches[0][0][:4096 // w].to(device) for w, batches in valid_batches.items()}
+    capped_heads, capped_recently = set(), {}
+
+    def check_attention(window: int) -> None:
+        for layer, head, score in cap_attention(model, probes[window], args.attention_cap):
+            key = (layer, head)
+            capped_recently[key] = max(capped_recently.get(key, 0.0), score)
+            if key not in capped_heads:
+                capped_heads.add(key)
+                progress.log(f"attention cap: layer {layer} head {head} reached a score of {score:,.0f}; "
+                             f"scaled back to {args.attention_cap:.0f}")
 
     params = sum(p.numel() for p in model.parameters())
     plan = (f"{args.short_window}-character windows until step {short_steps}, then {WINDOW}"
@@ -208,6 +239,8 @@ def main():
                  f"{config.position_embedding_type} positions | precision {precision} | "
                  f"GPU {torch.cuda.get_device_name()}")
     writer = SummaryWriter(args.out / "logs")
+    if args.attention_cap:
+        check_attention(window_at(step))
 
     def batch_source(first_step: int):
         next_step = first_step  # batches are produced in step order
@@ -239,14 +272,16 @@ def main():
         if scaler is not None:
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
         else:
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
         step += 1
+        if args.attention_cap and step % args.cap_every == 0:
+            check_attention(window_at(step))
 
         if step % 10 == 0:  # reading values back from the GPU every step would slow training
             masked = labels != -100
@@ -254,30 +289,54 @@ def main():
             loss_avg = loss.item() if loss_avg is None else 0.9 * loss_avg + 0.1 * loss.item()
             acc_avg = accuracy if acc_avg is None else 0.9 * acc_avg + 0.1 * accuracy
             chars = chars_seen / (time.time() - started)
-            metrics = {"loss": loss_avg, "acc": acc_avg, "lr": lr, "char/s": chars, "GPU GB": gpu_memory_gb()}
+            metrics = {"loss": loss_avg, "acc": acc_avg, "lr": lr, "grad": grad_norm.item(),
+                       "char/s": chars, "GPU GB": gpu_memory_gb()}
         progress.step(metrics, write_every=100, step=step)
         if step % 100 == 0 and metrics:
             writer.add_scalar("train/loss", loss_avg, step)
             writer.add_scalar("train/masked_accuracy", acc_avg, step)
             writer.add_scalar("train/lr", lr, step)
+            writer.add_scalar("train/grad_norm", metrics["grad"], step)
         if step % args.eval_every == 0 or step == args.max_steps:
             window = window_at(step - 1)
             valid_loss, accuracy = evaluate(model, valid_batches[window], device, autocast)
+            scores = max_attention_scores(model, probes[window]).amax(dim=1).tolist()  # per layer
+            capped = ", ".join(f"layer {l} head {h} (up to {s:,.0f})" for (l, h), s in sorted(capped_recently.items()))
+            capped_recently.clear()
             progress.log(f"eval step {step} ({window}-character windows): validation loss {valid_loss:.3f} | "
-                         f"masked-character accuracy {accuracy:.3f}\n{fill_examples(model, device)}")
+                         f"masked-character accuracy {accuracy:.3f}\n"
+                         f"    largest attention score per layer: {' '.join(f'{s:.0f}' for s in scores)}"
+                         f"{' | capped since last evaluation: ' + capped if capped else ''}\n"
+                         f"{fill_examples(model, device)}")
             writer.add_scalar(f"valid{window}/loss", valid_loss, step)
             writer.add_scalar(f"valid{window}/accuracy", accuracy, step)
+            for layer, score in enumerate(scores):
+                writer.add_scalar(f"attention/max_score_layer{layer}", score, step)
             with open(args.out / "eval.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps({"step": step, "window": window, "valid_loss": valid_loss,
-                                    "accuracy": accuracy}) + "\n")
+                                    "accuracy": accuracy, "max_attention_scores": scores}) + "\n")
+            previous = best.get(window)
+            if previous is None or valid_loss < previous[0]:
+                best[window] = (valid_loss, step)
+                save(args.out / "best.pt", f"new best validation loss for {window}-character windows: "
+                                           f"{valid_loss:.3f} (saved best.pt and best_model)")
+                model.save_pretrained(args.out / "best_model")
+                build_tokenizer().save_pretrained(args.out / "best_model")
+            elif valid_loss > previous[0] * (1 + args.stop_worse):
+                progress.log(f"STOPPED: validation loss {valid_loss:.3f} is more than {args.stop_worse:.0%} worse "
+                             f"than the best ({previous[0]:.3f} at step {previous[1]}). The best model is in "
+                             f"{args.out / 'best_model'} and its full checkpoint in {args.out / 'best.pt'}.")
+                progress.close()
+                sys.exit(1)
         if time.time() - last_ckpt > args.ckpt_minutes * 60:
-            save()
+            save(ckpt, f"checkpoint saved at step {step}")
             last_ckpt = time.time()
 
-    save()
+    save(ckpt, f"checkpoint saved at step {step}")
     model.save_pretrained(args.out / "model")
     build_tokenizer().save_pretrained(args.out / "model")
-    progress.log(f"Finished: Hugging Face model saved to {args.out / 'model'}")
+    progress.log(f"Finished: Hugging Face model saved to {args.out / 'model'} "
+                 f"(best validation: {', '.join(f'{w} characters {l:.3f} at step {s}' for w, (l, s) in sorted(best.items()))})")
     progress.close()
 
 
