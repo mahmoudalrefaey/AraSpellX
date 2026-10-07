@@ -17,7 +17,7 @@ wheels = [
 ]
 
 [[package]]
-name = "araspell"
+name = "araspellx"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

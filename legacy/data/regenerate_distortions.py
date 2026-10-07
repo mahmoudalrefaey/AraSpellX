@@ -9,9 +9,9 @@ available for regression comparisons.
 
 Run from the repository root:
 
-    python -m data.regenerate_distortions --input data/dataset/train.csv
-    python -m data.regenerate_distortions --input data/dataset/test.csv
-    python -m data.regenerate_distortions --input data/dataset/test.csv --preview 20
+    PYTHONPATH=legacy python -m data.regenerate_distortions --input data/dataset/train.csv
+    PYTHONPATH=legacy python -m data.regenerate_distortions --input data/dataset/test.csv
+    PYTHONPATH=legacy python -m data.regenerate_distortions --input data/dataset/test.csv --preview 20
 """
 from argparse import ArgumentParser
 import csv

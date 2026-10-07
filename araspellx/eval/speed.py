@@ -11,7 +11,7 @@ benchmark can run on untrained models of any size.
 from __future__ import annotations
 
 import argparse
-import csv
+import json
 import time
 from pathlib import Path
 from typing import List
@@ -88,15 +88,17 @@ def export_random_model(layers: int, hidden: int, path: Path, vocab_size: int = 
 
 
 def load_text(words: int, source: Path) -> str:
-    """Join clean sentences from a dataset CSV into one text of ~words words."""
+    """Join paragraphs of a JSONL test file ("text" field) into one text of ~words words."""
     text, count = [], 0
-    with open(source, encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f):
-            text.append(row["clean"])
-            count += len(row["clean"].split())
+    with open(source, encoding="utf-8") as f:
+        for line in f:
+            paragraph = json.loads(line)["text"]
+            text.append(paragraph)
+            count += len(paragraph.split())
             if count >= words:
                 break
-    return " ".join(text)
+    return "
+".join(text)
 
 
 def main():
@@ -105,7 +107,7 @@ def main():
                         help="LAYERSxHIDDEN, e.g. 8x512")
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--words", type=int, default=20000)
-    parser.add_argument("--text_csv", type=Path, default=Path("data/dataset/test.csv"))
+    parser.add_argument("--text", type=Path, default=Path("data/v1/testsets/T7_msa.jsonl"))
     parser.add_argument("--workdir", type=Path, default=Path("artifacts/speed"))
     args = parser.parse_args()
 
@@ -113,7 +115,7 @@ def main():
     from onnxruntime.quantization import QuantType, quantize_dynamic
 
     args.workdir.mkdir(parents=True, exist_ok=True)
-    text = load_text(args.words, args.text_csv)
+    text = load_text(args.words, args.text)
     options = ort.SessionOptions()
     options.intra_op_num_threads = args.threads
     options.inter_op_num_threads = 1

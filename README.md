@@ -2,446 +2,147 @@
   <img src="assets/arasSpellX-banner.svg" alt="AraSpellX — Arabic Spelling Correction" width="100%">
 </p>
 
-<p align="center">
-<img src="https://img.shields.io/badge/Python-3.10-blue?style=for-the-badge" alt="Python 3.10">
-  <a href="https://arxiv.org/abs/2405.06981">
-    <img src="https://img.shields.io/badge/Paper-AraSpell-8b5cf6?style=for-the-badge&logo=arxiv" alt="AraSpell paper">
-  </a>
-  <a href="https://huggingface.co/">
-  <img src="https://img.shields.io/badge/Hugging%20Face-Model-yellow?style=for-the-badge" alt="Hugging Face">
-  </a>
-  <img src="https://img.shields.io/badge/Architecture-Transformer-purple?style=for-the-badge" alt="Transformer">
-
-</p>
-
 <h1 align="center">AraSpellX</h1>
 
 <p align="center">
-  <strong>Arabic spelling correction with Transformer-based sequence-to-sequence learning</strong><br>
-  An independent Transformer implementation inspired by the AraSpell research work.
+  <strong>A character-level Arabic transformer, trained from scratch, that detects and corrects spelling errors and OCR corruption.</strong><br>
+  Built to be a trustworthy component of Arabic NLP pipelines: RAG preprocessing, text cleaning and OCR post-processing.
 </p>
 
 <p align="center">
-  <a href="#overview">Overview</a> •
-  <a href="#architecture">Architecture</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#training">Training</a> •
-  <a href="#evaluation">Evaluation</a> •
-  <a href="#results">Results</a> •
-  <a href="#citation">Citation</a>
+  <img src="https://img.shields.io/badge/Python-3.10-blue" alt="Python 3.10">
+  <img src="https://img.shields.io/badge/Model-character--level%20BERT-purple" alt="Character-level BERT">
+  <img src="https://img.shields.io/badge/Status-v1%20in%20development-orange" alt="Status">
+  <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT">
 </p>
 
----
-
-## Overview
-
-Arabic text can contain character substitutions, missing characters, extra characters, keyboard noise, and context-dependent spelling errors.
-
-**AraSpellX** is an independent implementation inspired by **AraSpell: A Deep Learning Approach for Arabic Spelling Correction** by Mahmoud Salhab and Faisal Abu-Khzam. The original research explores attentional RNN and Transformer sequence-to-sequence architectures with synthetic error generation for scalable Arabic spelling-correction training.
-
-> **Note:** AraSpellX is not the official AraSpell repository. The original implementation is maintained at [msalhab96/AraSpell](https://github.com/msalhab96/AraSpell).
-
-### Goals
-
-- Build a reproducible Arabic spelling-correction training pipeline
-- Support sequence-to-sequence correction of noisy Arabic text
-- Generate synthetic spelling errors from clean Arabic data
-- Evaluate models using CER and WER
-- Make the implementation suitable for future Hugging Face releases
-- Keep experiments transparent and reproducible
+> **Status:** v1 is under active development. The data pipeline, test sets, model and training code are in place; models are being trained. No release or benchmark results yet.
 
 ---
 
-## Why Arabic spelling correction?
+## What it does
 
-| Error type | Example |
+AraSpellX takes raw Arabic text, typed by people or produced by OCR, and returns the corrected text **plus every edit it made**, each with its position in the original text, a confidence and an error category. Pipelines can apply only confident edits, show suggestions, or just flag likely errors.
+
+It corrects modern standard and classical Arabic:
+
+| Typed errors | OCR errors |
 |---|---|
-| Missing character | `الجامعه` → `الجامعة` |
-| Character substitution | `مسؤل` → `مسؤول` |
-| Extra characters | `المدرسسسة` → `المدرسة` |
-| Input / keyboard noise | Arabic character substitutions |
-| Contextual errors | A valid word used incorrectly in context |
+| Missing or wrong hamza (اصبح → أصبح, لأرسال → لإرسال) | Wrong dots on the right letter shape (نحسين → تحسين, حميع → جميع) |
+| ة/ه and ى/ي habits (الجامعه → الجامعة, الي → إلى) | Similar-shape confusions, broken ligatures |
+| Hamza seats (السوال → السؤال, كفائة → كفاءة) | Merged or split words |
+| Typos: missing, extra, swapped and neighbouring-key letters | Stray marks, kashida and spurious diacritics |
+| Merged and split words | Garbled words recoverable from context |
 
-The goal is not simply to find a word in a dictionary. The model learns a mapping from a noisy sequence to its intended sequence.
+It is designed to **never touch** what it should not: digits, Latin text, punctuation, Quranic quotations and dialect text pass through unchanged, and diacritics are preserved.
 
----
+## How it works
 
-## Architecture
+- **Edit labels, not rewriting.** An encoder reads the text one character at a time and predicts, for each character, *keep*, *delete*, *replace with x* or *insert y after it*. Correct text stays correct by default, every change is an explicit decision with a probability, and one pass over the text is enough (fast on CPU).
+- **Trained from scratch.** The model is our own BERT implementation, weight-compatible with Hugging Face's `BertForTokenClassification`, so released checkpoints load with plain `transformers`. It is first pretrained on raw Arabic text (masked characters), then trained to correct.
+- **Real errors, not only rules.** Training mixes clean text, typed-error noise, OCR errors produced by a real OCR engine on rendered and degraded pages, real OCR output from scanned documents and real human corrections.
+- **Measured on real data.** Frozen test sets of real scans, classical books and clean text (to measure damage), deduplicated against all training data.
 
-AraSpellX focuses exclusively on the **Transformer-based sequence-to-sequence architecture**.
+Details: [architecture](docs/architecture.md) · [data](docs/data.md) · [evaluation](docs/evaluation.md)
 
-The original AraSpell project also includes RNN-based architectures, but those architectures are **not implemented or supported in AraSpellX**. They are mentioned only as part of the original research context.
-
-```mermaid
-flowchart LR
-    A["Clean Arabic text"] --> B["Error Injection"]
-    B --> C["Noisy Arabic text"]
-    C --> D["Tokenizer"]
-    D --> E["Transformer Encoder"]
-    E --> F["Transformer Decoder"]
-    F --> G["Corrected Arabic text"]
-    G --> H["CER / WER"]
-```
-
----
-
-## Error generation
-
-The reference research uses synthetic error generation to turn large amounts of clean Arabic text into training pairs. The paper reports experiments trained on more than **6.9 million Arabic sentences**.
-
-```mermaid
-flowchart LR
-    A["Clean sentence"] --> B["Error generator"]
-    B --> C["Insertion"]
-    B --> D["Deletion"]
-    B --> E["Substitution"]
-    B --> F["Mixed corruption"]
-    C --> G["Noisy sentence"]
-    D --> G
-    E --> G
-    F --> G
-```
-
-Example:
+## Repository layout
 
 ```text
-Clean:     اللغة العربية لغة جميلة
-Distorted: اللغه العربيه لغة جميله
-Target:    اللغة العربية لغة جميلة
+araspellx/          the v1 package
+  text/             character set, normalization (with offset mapping), tokenizer
+  model/            BERT encoder (masked-LM and token-classification heads)
+  data/             corpus extraction, held-out splits, deduplication, edit labels
+  noise/            typed-error noise and rendered-OCR training pairs
+  ocr/              rendering, page degradation, Tesseract (run in the OCR container)
+  testsets/         builders of the frozen test sets
+  train/            pretraining and correction training
+  correct/          decoding predictions into corrected text and edits
+  eval/             edit-level metrics, error categories, CPU speed benchmark
+docker/ocr/         the pinned OCR environment (Tesseract 5, Arabic fonts)
+tests/              unit tests
+benchmarks/         small real-world benchmark (27 hand-corrected sentences)
+legacy/             v0: the AraSpell-style seq2seq baseline
 ```
 
----
+`data/` holds downloaded sources and generated datasets; it is not tracked.
 
-## End-to-end pipeline
+## Getting started
 
-```mermaid
-flowchart TB
-    A["Arabic corpus"] --> B["Cleaning & normalization"]
-    B --> C["Train / Dev / Test"]
-    C --> D["Synthetic error injection"]
-    D --> E["Tokenization"]
-    E --> F["Model training"]
-    F --> G["Validation"]
-    G --> H["Checkpoint"]
-    H --> I["Inference"]
-    I --> J["Corrected Arabic"]
-```
-
----
-
-## Installation
-
-### Clone
+Requirements: Python 3.10, [uv](https://docs.astral.sh/uv/), an NVIDIA GPU for training, Docker for the OCR steps.
 
 ```bash
-git clone https://github.com/mahmoudalrefaey/AraSpellX.git
-cd AraSpellX
+uv sync                                   # create .venv with all dependencies
+uv run pytest tests -q                    # unit tests
+docker build -t araspellx-ocr docker/ocr  # OCR environment (Linux container)
 ```
 
-### Environment
+Commands that run inside the OCR container use:
 
 ```bash
-python -m venv .venv
+docker run --rm -v "$PWD:/work" -w /work araspellx-ocr python3 -m <module> ...
 ```
 
-Windows:
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-Linux / macOS:
+## Building the data
 
 ```bash
-source .venv/bin/activate
+# 1. Wikimedia dumps (2026-10-01) -> clean paragraphs
+for w in arwiki arwikisource arzwiki arywiki; do
+  curl -L -o data/raw/wikimedia/$w-20261001-pages-articles.xml.bz2 \
+    https://dumps.wikimedia.org/$w/20261001/$w-20261001-pages-articles.xml.bz2
+  python -m araspellx.data.wikimedia data/raw/wikimedia/$w-20261001-pages-articles.xml.bz2 data/v1/corpus/$w.jsonl
+done
+
+# 2. Test sets (see docs/evaluation.md for downloads)
+python -m araspellx.testsets.clean                            # T-7 clean text
+<container> python3 -m araspellx.testsets.yarmouk ocr && python -m araspellx.testsets.yarmouk build
+<container> python3 -m araspellx.testsets.nod ocr     && python -m araspellx.testsets.nod build
+<container> python3 -m araspellx.testsets.openiti ocr && python -m araspellx.testsets.openiti build
+
+# 3. Training data (filtered against every test set)
+python -m araspellx.data.pretrain_corpus --tests data/v1/testsets data/raw/nod/gt/ground_truth/yarmouk_gt data/raw/openiti/ara
+<container> python3 -m araspellx.noise.ocr_pairs --count 100000
 ```
-
-### Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-For GPU training, install a PyTorch build compatible with the CUDA version available on your machine.
-
----
-
-## Dataset format
-
-The training pipeline uses paired clean and distorted text:
-
-```text
-clean,distorted
-اللغة العربية جميلة,اللغه العربيه جميله
-هذا مثال آخر,هاذا مثال اخر
-```
-
-Where:
-
-- **clean** is the target sentence
-- **distorted** is the noisy input
-
-Keep train, development, and test data separated to avoid leakage.
-
----
 
 ## Training
 
-The repository is being developed around a reproducible training workflow.
-
-Typical usage:
+Both stages save a checkpoint every 20 minutes and resume when the same command is run again. Run the short check first.
 
 ```bash
-python train.py \
-    --epochs <epochs> \
-    --train_path <train.csv> \
-    --test_path <test.csv>
+# Pretraining (masked characters)
+python -m araspellx.train.pretrain --out artifacts/pretrain_check --max_steps 600 --eval_every 200
+python -m araspellx.train.pretrain --out artifacts/pretrain --max_steps 40000
+
+# Correction (edit labels), starting from the pretrained encoder
+python -m araspellx.train.correct --out artifacts/correct_check --max_steps 600 --eval_every 300
+python -m araspellx.train.correct --out artifacts/correct --max_steps 30000
 ```
 
-Before a full GPU run, validate:
-
-- dataset integrity
-- tokenizer and vocabulary
-- maximum sequence length
-- padding and special tokens
-- train/dev/test separation
-- GPU memory usage
-- checkpoint creation
-- validation metrics
-
----
-
-## Training Pipeline Optimizations
-
-The training pipeline has been significantly modernized for performance, correctness, and cloud readiness:
-
-### Performance Optimizations
-
-| Optimization | Before | After | Impact |
-|-------------|--------|-------|--------|
-| **PyTorch Version** | 1.12.0+cu116 (2022) | 2.3.0+cu121 | Modern kernels, SDPA support |
-| **Attention** | Manual (Python loops, many reshapes) | `F.scaled_dot_product_attention` | **~500x faster cross-attention, ~110x faster self-attention** |
-| **Precision** | FP32 only | BF16 mixed precision (autocast + GradScaler) | **2-3x speedup, 50% memory reduction** |
-| **Batch Size** | OOM at 256 on 6GB GPU | 256 effective via gradient accumulation (8 steps) | Enables full batch training |
-| **Data Loading** | `num_workers=0`, pandas + tokenization in `__getitem__` | **Pre-tokenization + disk cache**, `num_workers=0` (Windows), `pin_memory` | **6.9x faster data loading**, no per-epoch tokenization, avoids worker pickling OOM |
-| **Positional Encoding** | Computed per forward (Python loops) | Pre-computed buffer | Eliminated CPU→GPU transfer |
-| **GPU Utilization** | Low (CPU-bound) | >90% (compute-bound) | **56x epoch time reduction** |
-
-For the full-report view [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)
-
-### Training Correctness Fixes
-
-- **NaN prevention**: Fixed attention masking (diagonal unmasking for self-attention, key-only masking for cross-attention)
-- **Gradient clipping**: Enabled with configurable `--grad_norm` (default 1.0)
-- **Checkpoint compatibility**: Saves scaler state, handles optimizer counter correctly
-- **Reproducibility**: Explicit seed handling, deterministic CUDA options
-
-### New Configuration Options
-
-```bash
-python train.py \
-    --epochs 3 \                    # Number of epochs (was default 100!)
-    --batch_size 32 \               # Micro-batch size (fits in 6GB VRAM)
-    --grad_accum_steps 8 \          # Gradient accumulation for effective batch_size=256
-    --mixed_precision \             # Enable BF16 mixed precision
-    --num_workers 0 \               # DataLoader workers (0 on Windows to avoid pickling OOM with large cached dataset)
-    --pin_memory \                  # Pinned memory for faster GPU transfers
-    --max_len 128 \                 # Max sequence length
-    --distortion_ratio 0.1 \        # Data corruption ratio (0.05, 0.1, 0.15)
-    --d_model 512 \                 # Model dimension
-    --n_layers 4 \                  # Encoder/decoder layers
-    --h 8 \                         # Attention heads
-    --hidden_size 256 \             # FFN hidden size
-    --clip_grad \                   # Enable gradient clipping
-    --grad_norm 1.0 \               # Max gradient norm
-    --warmup_staps 4000 \           # LR warmup steps
-    --stop_after 5 \                # Early stopping patience
-    --log_interval 100 \            # TensorBoard logging interval
-    --val_interval 1 \              # Validation frequency (epochs)
-    --save_attention_viz \          # Enable attention visualization (disabled by default)
-```
-
-> **Note on `num_workers`**: On Windows, PyTorch uses `spawn` multiprocessing which pickles the entire dataset to each worker. With 6.9M pre-tokenized samples (~3-4 GB), using `num_workers > 0` causes CPU RAM OOM. The pre-tokenization optimization makes single-threaded loading fast enough (~11,800 samples/sec). On Linux, `num_workers=4` with `pin_memory` can be used for additional speedup.
-
-### Benchmark Results
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Time per epoch | ~7 days | ~3 hours | **56x faster** |
-| 3-epoch training | ~21 days | ~9 hours | **56x faster** |
-| Samples/second | ~40 | ~650 | **16x** |
-| Peak GPU memory | 10.6 GB (OOM) | 1.4 GB | Fits in 6GB |
-| Effective batch size | OOM at 256 | 256 (32 × 8 accum) | Enabled |
-| **Data loading time/batch** | **7.51 sec** | **0.022 sec** | **340x faster** |
-
-### Data Pipeline Optimization (New)
-
-The key bottleneck was tokenization running in `__getitem__` for every sample, every epoch:
-
-- **Before**: 6.9M samples × 2 tokenizations (clean + distorted) = 13.8M tokenizations/epoch at ~7.51 sec/batch
-- **After**: One-time pre-tokenization cached to disk (`data/dataset/train.tokenized.pt`), then only padding + tensor conversion in `__getitem__`
-- **First run**: ~5-10 minutes to tokenize 6.9M samples and create cache
-- **Subsequent runs**: Load from cache in seconds
-- **Result**: 0.15 sec/batch → 0.022 sec/batch (**6.9x faster** data loading)
-
-With `num_workers=0` on Windows: **11,800 samples/sec** (data pipeline no longer bottleneck)
-With `num_workers=4` on Linux/test set: **~28,000 samples/sec** (2.4x speedup)
-
-### Experiment Preservation
-
-All optimizations preserve the original **AraSpell Transformer_0.1** experiment exactly:
-- Same architecture: 4-layer encoder-decoder, d_model=512, h=8, hidden=256
-- Same data: 6.9M training samples, distortion_ratio=0.1
-- Same loss: KLDivLoss with label smoothing α=0.1
-- Same optimizer: AdamWarmup with 4000 warmup steps
-- Same tokenization: 40 Arabic characters + special tokens
-
-The four "Transformer experiments" from the paper are **different data configurations** (distortion ratios 0.05, 0.1, mixed, varied), not different architectures.
-
----
-
-## Inference
-
-The intended inference flow is:
-
-```text
-Noisy Arabic text
-        ↓
-     Tokenizer
-        ↓
-    AraSpellX
-        ↓
-Corrected Arabic text
-```
-
-Example:
-
-```text
-Input:
-الطلاب يدرسون اللغه العربيه
-
-Output:
-الطلاب يدرسون اللغة العربية
-```
-
-The final inference API will follow the implementation exposed by the current release.
-
----
-
-## Evaluation
-
-### Character Error Rate
-
-**CER** measures character-level edits between the prediction and reference.
-
-`CER ↓ = lower is better`
-
-### Word Error Rate
-
-**WER** measures word-level errors.
-
-`WER ↓ = lower is better`
-
-```mermaid
-flowchart LR
-    A["Predictions"] --> B["Normalization"]
-    B --> C["Character comparison"]
-    B --> D["Word comparison"]
-    C --> E["CER"]
-    D --> F["WER"]
-```
-
----
-
-## Results
-
-### Reference benchmark
-
-The table below contains selected results reported by the **original AraSpell research project**.
-
-These are **reference results from AraSpell, not AraSpellX results**.
-
-| Model | CER @ 5% | CER @ 10% | WER @ 5% | WER @ 10% |
-|---|---:|---:|---:|---:|
-| Transformer 0.05 | 1.24% | 4.15% | 5.35% | 18.38% |
-| Transformer 0.1 | 1.45% | 2.82% | 5.95% | 10.36% |
-| Transformer mixed | 1.11% | 2.80% | 4.80% | 10.65% |
-| Transformer varied | 1.22% | 3.16% | 5.41% | 12.35% |
-
-### AraSpellX benchmark
-
-AraSpellX results will be added after the Transformer implementation and training pipeline are fully validated.
-
----
-
-## Project status
-
-**Development**
-
-- [x] Repository initialized
-- [x] Project documentation
-- [x] AraSpellX implementation
-- [ ] Full GPU training
-- [ ] CER / WER benchmark
-- [ ] Inference examples
-- [ ] Hugging Face model release
-
----
-
-## Research reference
-
-### AraSpell: A Deep Learning Approach for Arabic Spelling Correction
-
-**Authors:** Mahmoud Salhab, Faisal Abu-Khzam
-
-**Paper:** https://arxiv.org/abs/2405.06981
-
-The paper presents an Arabic spelling-correction framework using RNN and Transformer Seq2Seq architectures with artificial error generation.
-
-**Original implementation:**  
-https://github.com/msalhab96/AraSpell
-
----
-
-## Attribution
-
-AraSpellX is an independent implementation focused on the **Transformer architecture** described in the AraSpell research work.
-
-The project was developed with reference to:
-
-**AraSpell — Arabic Spelling Correction**  
-https://github.com/msalhab96/AraSpell
-
-Original authors:
-
-- Mahmoud Salhab
-- Faisal Abu-Khzam
-
-The original AraSpell source code is licensed under the MIT License. Where applicable, original copyright and license notices are retained for substantial portions of reused source code.
-
----
-
-## Citation
-
-If you use the research behind AraSpellX, please cite the original paper:
-
-```bibtex
-@article{salhab2024araspell,
-  title={AraSpell: A Deep Learning Approach for Arabic Spelling Correction},
-  author={Salhab, Mahmoud and Abu-Khzam, Faisal},
-  journal={arXiv preprint arXiv:2405.06981},
-  year={2024}
-}
-```
-
----
+## Roadmap to v1
+
+- [x] Character set, normalization with offset mapping, Hugging Face tokenizer
+- [x] Own BERT implementation, verified identical to Hugging Face's
+- [x] Model size fixed by a CPU speed benchmark (8 layers × 384, 14.6M parameters)
+- [x] Wikimedia corpus, held-out splits, test-set deduplication
+- [x] Pinned OCR container; real-scan, classical and clean-text test sets
+- [x] Typed-error noise and rendered-OCR training pairs
+- [ ] Real typed-error test set mined from Wikipedia edit history (T-1)
+- [ ] Pretraining and correction training
+- [ ] Calibrated confidence, refinement passes, protection rules (Quran, accepted variants)
+- [ ] Helper package (`correct()` with apply / suggest / flag modes) and ONNX CPU inference
+- [ ] Evaluation against the release gates, model card, Hugging Face release
+
+## Legacy baseline
+
+`legacy/` contains v0, a reimplementation of the AraSpell sequence-to-sequence approach. It is kept as the baseline that v1 is compared against; see [legacy/README.md](legacy/README.md).
+
+## Acknowledgements and data
+
+- **AraSpell** (Salhab & Abu-Khzam, [arXiv:2405.06981](https://arxiv.org/abs/2405.06981)) introduced training Arabic spelling correction on synthetic errors; it is the starting point and the baseline of this project.
+- Edit-label correction follows the text-editing line of work, including [GECToR](https://aclanthology.org/2020.bea-1.16/) and [Alhafni & Habash's Arabic text editing](https://arxiv.org/abs/2503.00985).
+- Training text: [Wikimedia](https://dumps.wikimedia.org/) projects (CC BY-SA).
+- Test data: [Yarmouk Arabic OCR Dataset](https://www.kaggle.com/datasets/eyadwin/yarmouk-ocr-dataset), [Noisy OCR Dataset](https://zenodo.org/records/5068735) (CC BY 4.0), [OpenITI OCR gold standard](https://github.com/OpenITI/OCR_GS_Data) (CC BY-NC-SA 4.0, evaluation only).
+- OCR: [Tesseract](https://github.com/tesseract-ocr/tesseract) with `tessdata_best` (Apache-2.0); fonts Amiri, Noto and Scheherazade (OFL).
 
 ## License
 
-AraSpellX is released under the **MIT License**, subject to the attribution requirements described in [`LICENSE`](LICENSE).
-
----
-
-<p align="center">
-  <sub>Arabic NLP • Spelling Correction • Seq2Seq • Transformer</sub>
-</p>
+Code: [MIT](LICENSE). Data and models derived from Wikimedia text follow CC BY-SA attribution requirements.

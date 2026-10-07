@@ -1,7 +1,7 @@
 [project]
-name = "araspell"
+name = "araspellx"
 version = "0.1.0"
-description = "Arabic Spelling Correction with Transformer seq2seq"
+description = "Character-level Arabic transformer for spelling and OCR error correction, trained from scratch"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [

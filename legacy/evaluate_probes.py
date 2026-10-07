@@ -188,7 +188,7 @@ def main():
     parser.add_argument("--n_single", default=120, type=int)
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument(
-        "--benchmark", default="data/benchmarks/real_world.csv", type=str,
+        "--benchmark", default="benchmarks/real_world.csv", type=str,
         help="Real-world CSV (clean, distorted) to score as well; '' to skip",
     )
     args = parser.parse_args()
