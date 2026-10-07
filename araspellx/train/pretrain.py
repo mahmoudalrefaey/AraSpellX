@@ -26,6 +26,7 @@ from torch.utils.tensorboard import SummaryWriter
 from araspellx.model.bert import BertForMaskedLM, make_config
 from araspellx.text.charset import ARABIC, ARABIC_LETTERS, CLS, DIACRITICS, MASK, PAD, SEP, TOKEN_TO_ID, VOCAB
 from araspellx.text.tokenizer import build_tokenizer, encode_chars
+from araspellx.train.progress import Prefetcher, Progress, gpu_memory_gb, precision_settings
 
 WINDOW = 512
 CONTENT = WINDOW - 2
@@ -94,12 +95,12 @@ def learning_rate(step: int, peak: float, warmup: int, total: int) -> float:
 
 
 @torch.no_grad()
-def evaluate(model, batches, device):
+def evaluate(model, batches, device, autocast):
     model.eval()
     loss_sum = correct = count = 0
     for inputs, labels in batches:
         inputs, labels = inputs.to(device), labels.to(device)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with autocast():
             logits = model(inputs, (inputs != TOKEN_TO_ID[PAD]).long())
         mask = labels != -100
         loss_sum += F.cross_entropy(logits[mask].float(), labels[mask], reduction="sum").item()
@@ -138,9 +139,12 @@ def main():
     parser.add_argument("--eval_every", type=int, default=2000)
     parser.add_argument("--ckpt_minutes", type=float, default=20)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--precision", choices=["auto", "bf16", "fp16", "fp32"], default="auto",
+                        help="auto: bf16 on GPUs that support it (RTX 30xx, A100), else fp16 (T4, V100)")
     args = parser.parse_args()
 
     device = torch.device("cuda")
+    autocast, scaler, precision = precision_settings(args.precision)
     args.out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(args.seed)
     config = make_config(vocab_size=len(VOCAB), layers=args.layers, hidden=args.hidden,
@@ -163,48 +167,67 @@ def main():
         step = state["step"]
         train.rng.bit_generator.state = state["data_rng"]
         torch.set_rng_state(state["torch_rng"].cpu())
-        print(f"Resumed from {ckpt} at step {step}")
+        if scaler is not None and state.get("scaler"):
+            scaler.load_state_dict(state["scaler"])
+
+    progress = Progress(args.max_steps, step, args.out / "train.log", "pretrain")
+    progress.log(f"Resumed from {ckpt} at step {step}" if step else f"Starting at step 0 -> {args.out}")
 
     def save():
         partial = ckpt.with_suffix(".partial")
         torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(), "step": step,
                     "data_rng": train.rng.bit_generator.state, "torch_rng": torch.get_rng_state(),
-                    "args": vars(args)}, partial)
+                    "scaler": scaler.state_dict() if scaler else None, "args": vars(args)}, partial)
         partial.replace(ckpt)
+        progress.log(f"checkpoint saved at step {step}")
 
     params = sum(p.numel() for p in model.parameters())
-    print(f"{params / 1e6:.1f}M parameters, {len(train.data) / 1e6:.0f}M training characters, "
-          f"{args.max_steps} steps x {args.batch_size} windows")
+    progress.log(f"{params / 1e6:.1f}M parameters | {len(train.data) / 1e6:,.0f}M training characters | "
+                 f"{args.max_steps} steps x {args.batch_size} windows | precision {precision} | "
+                 f"GPU {torch.cuda.get_device_name()}")
     writer = SummaryWriter(args.out / "logs")
+    batches = Prefetcher(lambda: train.batch(args.batch_size))
     last_ckpt = started = time.time()
-    start_step, loss_avg = step, None
+    start_step, loss_avg, acc_avg, metrics = step, None, None, {}
     while step < args.max_steps:
-        inputs, labels = train.batch(args.batch_size)
+        inputs, labels = batches.next()
         inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+        lr = learning_rate(step, args.lr, args.warmup, args.max_steps)
         for group in optimizer.param_groups:
-            group["lr"] = learning_rate(step, args.lr, args.warmup, args.max_steps)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+            group["lr"] = lr
+        with autocast():
             logits = model(inputs)
             loss = F.cross_entropy(logits.float().view(-1, logits.shape[-1]), labels.view(-1),
                                    ignore_index=-100)
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
         step += 1
-        loss_avg = loss.item() if loss_avg is None else 0.98 * loss_avg + 0.02 * loss.item()
 
-        if step % 100 == 0:
-            rate = (step - start_step) / (time.time() - started)
-            eta = (args.max_steps - step) / rate / 3600
-            print(f"step {step:6d}  loss {loss_avg:.3f}  lr {optimizer.param_groups[0]['lr']:.2e}  "
-                  f"{rate:.2f} steps/s  ETA {eta:.1f} h  GPU {torch.cuda.max_memory_allocated() / 1e9:.1f} GB",
-                  flush=True)
+        if step % 10 == 0:  # reading values back from the GPU every step would slow training
+            masked = labels != -100
+            accuracy = (logits[masked].argmax(-1) == labels[masked]).float().mean().item()
+            loss_avg = loss.item() if loss_avg is None else 0.9 * loss_avg + 0.1 * loss.item()
+            acc_avg = accuracy if acc_avg is None else 0.9 * acc_avg + 0.1 * accuracy
+            chars = (step - start_step) * args.batch_size * CONTENT / (time.time() - started)
+            metrics = {"loss": loss_avg, "acc": acc_avg, "lr": lr, "char/s": chars, "GPU GB": gpu_memory_gb()}
+        progress.step(metrics, write_every=100, step=step)
+        if step % 100 == 0 and metrics:
             writer.add_scalar("train/loss", loss_avg, step)
+            writer.add_scalar("train/masked_accuracy", acc_avg, step)
+            writer.add_scalar("train/lr", lr, step)
         if step % args.eval_every == 0 or step == args.max_steps:
-            valid_loss, accuracy = evaluate(model, valid_batches, device)
-            print(f"== step {step}: validation loss {valid_loss:.3f}, masked-character accuracy {accuracy:.3f}")
-            print(fill_examples(model, device), flush=True)
+            valid_loss, accuracy = evaluate(model, valid_batches, device, autocast)
+            progress.log(f"eval step {step}: validation loss {valid_loss:.3f} | "
+                         f"masked-character accuracy {accuracy:.3f}\n{fill_examples(model, device)}")
             writer.add_scalar("valid/loss", valid_loss, step)
             writer.add_scalar("valid/accuracy", accuracy, step)
             with open(args.out / "eval.jsonl", "a", encoding="utf-8") as f:
@@ -216,7 +239,8 @@ def main():
     save()
     model.save_pretrained(args.out / "model")
     build_tokenizer().save_pretrained(args.out / "model")
-    print(f"Finished: Hugging Face model saved to {args.out / 'model'}")
+    progress.log(f"Finished: Hugging Face model saved to {args.out / 'model'}")
+    progress.close()
 
 
 if __name__ == "__main__":

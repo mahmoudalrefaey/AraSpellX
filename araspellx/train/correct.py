@@ -34,6 +34,7 @@ from araspellx.train.correction_data import (
     Mixture, Paragraphs, batch, build_vocab, load_pairs, normalized_pairs, read_rows)
 from araspellx.text.charset import PAD, TOKEN_TO_ID
 from araspellx.text.tokenizer import build_tokenizer
+from araspellx.train.progress import Prefetcher, Progress, gpu_memory_gb, precision_settings
 
 DEV_SIZE = 300
 
@@ -99,16 +100,20 @@ def main():
     parser.add_argument("--eval_every", type=int, default=2000)
     parser.add_argument("--ckpt_minutes", type=float, default=20)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--precision", choices=["auto", "bf16", "fp16", "fp32"], default="auto",
+                        help="auto: bf16 on GPUs that support it (RTX 30xx, A100), else fp16 (T4, V100)")
     args = parser.parse_args()
 
     device = torch.device("cuda")
+    autocast, scaler, precision = precision_settings(args.precision)
     args.out.mkdir(parents=True, exist_ok=True)
+    messages = []  # logged once the progress display exists
     paragraphs = Paragraphs(args.text / "train.bin")
     ocr_train, ocr_dev = load_split_pairs([p for p in args.ocr_pairs if p.exists()])
     yarmouk_dev = load_pairs([args.yarmouk_dev]) if args.yarmouk_dev.exists() else []
     mixture = Mixture(paragraphs, ocr_train)
-    print(f"sources {dict(zip(mixture.sources, [round(w, 2) for w in mixture.weights]))}, "
-          f"{len(ocr_train)} OCR pairs for training, {len(ocr_dev)} for development")
+    messages.append(f"sources {dict(zip(mixture.sources, [round(w, 2) for w in mixture.weights]))} | "
+                    f"{len(ocr_train)} OCR pairs for training, {len(ocr_dev)} for development")
 
     vocab_path = args.out / "labels.json"
     if vocab_path.exists():
@@ -116,7 +121,7 @@ def main():
     else:
         vocab = build_vocab(mixture, samples=20000, seed=args.seed)
         vocab.save(vocab_path)
-    print(f"{len(vocab)} labels")
+    messages.append(f"{len(vocab)} labels")
 
     pretrained = BertForMaskedLM.from_pretrained(args.pretrained)
     config = pretrained.config
@@ -138,44 +143,74 @@ def main():
         optimizer.load_state_dict(state["optimizer"])
         step = state["step"]
         rng.setstate(state["rng"])
-        print(f"Resumed from {ckpt} at step {step}")
+        if scaler is not None and state.get("scaler"):
+            scaler.load_state_dict(state["scaler"])
+
+    progress = Progress(args.max_steps, step, args.out / "train.log", "correct")
+    progress.log(f"Resumed from {ckpt} at step {step}" if step else f"Starting at step 0 -> {args.out}")
+    for message in messages:
+        progress.log(message)
+    progress.log(f"{sum(p.numel() for p in model.parameters()) / 1e6:.1f}M parameters | "
+                 f"{args.max_steps} steps x {args.batch_size} windows | precision {precision} | "
+                 f"GPU {torch.cuda.get_device_name()}")
 
     def save():
         partial = ckpt.with_suffix(".partial")
         torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(), "step": step,
-                    "rng": rng.getstate(), "args": {k: str(v) for k, v in vars(args).items()}}, partial)
+                    "rng": rng.getstate(), "scaler": scaler.state_dict() if scaler else None,
+                    "args": {k: str(v) for k, v in vars(args).items()}}, partial)
         partial.replace(ckpt)
+        progress.log(f"checkpoint saved at step {step}")
 
     sets = dev_sets(Paragraphs(args.text / "valid.bin"), ocr_dev, yarmouk_dev)
     writer = SummaryWriter(args.out / "logs")
+    batches = Prefetcher(lambda: batch(mixture, vocab, args.batch_size, rng))
     last_ckpt = started = time.time()
-    start_step, loss_avg = step, None
+    start_step, loss_avg, acc_avg, metrics = step, None, None, {}
     while step < args.max_steps:
-        inputs, labels = batch(mixture, vocab, args.batch_size, rng)
-        inputs, labels = inputs.to(device), labels.to(device)
+        inputs, labels = batches.next()
+        inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+        lr = learning_rate(step, args.lr, args.warmup, args.max_steps)
         for group in optimizer.param_groups:
-            group["lr"] = learning_rate(step, args.lr, args.warmup, args.max_steps)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+            group["lr"] = lr
+        with autocast():
             logits = model(inputs, (inputs != TOKEN_TO_ID[PAD]).long())
             loss = F.cross_entropy(logits.float().view(-1, logits.shape[-1]), labels.view(-1), ignore_index=-100)
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
         step += 1
-        loss_avg = loss.item() if loss_avg is None else 0.98 * loss_avg + 0.02 * loss.item()
 
-        if step % 100 == 0:
-            rate = (step - start_step) / (time.time() - started)
-            print(f"step {step:6d}  loss {loss_avg:.4f}  {rate:.2f} steps/s  "
-                  f"ETA {(args.max_steps - step) / rate / 3600:.1f} h  "
-                  f"GPU {torch.cuda.max_memory_allocated() / 1e9:.1f} GB", flush=True)
+        if step % 10 == 0:  # reading values back from the GPU every step would slow training
+            # accuracy on characters whose label is not "keep": how often the model finds the fix
+            valid = labels != -100
+            edits = valid & (labels != 0)  # label 0 is KEEP
+            predicted = logits.argmax(-1)
+            edit_acc = (predicted[edits] == labels[edits]).float().mean().item() if edits.any() else 0.0
+            loss_avg = loss.item() if loss_avg is None else 0.9 * loss_avg + 0.1 * loss.item()
+            acc_avg = edit_acc if acc_avg is None else 0.9 * acc_avg + 0.1 * edit_acc
+            windows = (step - start_step) * args.batch_size / (time.time() - started)
+            metrics = {"loss": loss_avg, "edit acc": acc_avg, "lr": lr, "win/s": windows, "GPU GB": gpu_memory_gb()}
+        progress.step(metrics, write_every=100, step=step)
+        if step % 100 == 0 and metrics:
             writer.add_scalar("train/loss", loss_avg, step)
+            writer.add_scalar("train/edit_accuracy", acc_avg, step)
+            writer.add_scalar("train/lr", lr, step)
         if step % args.eval_every == 0 or step == args.max_steps:
+            progress.log(f"evaluating development sets at step {step} ...")
             report = evaluate(model, sets, vocab, device)
-            print(f"== step {step}")
+            progress.log(f"eval step {step}:\n" + "\n".join(
+                f"    {name:13s} " + "  ".join(f"{k} {v}" for k, v in values.items())
+                for name, values in report.items()))
             for name, values in report.items():
-                print(f"   {name:13s} {values}")
                 for key, value in values.items():
                     writer.add_scalar(f"{name}/{key}", value, step)
             with open(args.out / "eval.jsonl", "a", encoding="utf-8") as f:
@@ -188,7 +223,8 @@ def main():
     model.save_pretrained(args.out / "model")
     build_tokenizer().save_pretrained(args.out / "model")
     vocab.save(args.out / "model" / "labels.json")
-    print(f"Finished: Hugging Face model saved to {args.out / 'model'}")
+    progress.log(f"Finished: Hugging Face model saved to {args.out / 'model'}")
+    progress.close()
 
 
 if __name__ == "__main__":
