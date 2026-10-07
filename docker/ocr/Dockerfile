@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         poppler-utils \
         libraqm0 libfribidi0 libharfbuzz0b \
         fonts-hosny-amiri fonts-noto-core fonts-sil-scheherazade \
-        python3 python3-pip ca-certificates curl \
+        python3 python3-pip ca-certificates curl xz-utils p7zip-full \
     && rm -rf /var/lib/apt/lists/*
 
 # Tesseract's most accurate Arabic model, pinned to the tessdata_best 4.1.0 release.
