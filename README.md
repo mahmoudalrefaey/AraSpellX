@@ -61,7 +61,6 @@ araspellx/          the v1 package
 docker/ocr/         the pinned OCR environment (Tesseract 5, Arabic fonts)
 tests/              unit tests
 benchmarks/         small real-world benchmark (27 hand-corrected sentences)
-legacy/             v0: the AraSpell-style seq2seq baseline
 ```
 
 `data/` holds downloaded sources and generated datasets; it is not tracked.
@@ -133,7 +132,7 @@ python -m araspellx.train.correct --out artifacts/correct --max_steps 30000
 
 ## Legacy baseline
 
-`legacy/` contains v0, a reimplementation of the AraSpell sequence-to-sequence approach. It is kept as the baseline that v1 is compared against; see [legacy/README.md](legacy/README.md).
+v0, a reimplementation of the AraSpell sequence-to-sequence approach, is archived on the separate [`legacy-v0`](../../tree/legacy-v0) branch with its own README, data guide and limitations. It is the baseline v1 is compared against and is not part of this workflow.
 
 ## Acknowledgements and data
 
