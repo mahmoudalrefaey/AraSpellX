@@ -132,3 +132,8 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# AraSpellX v1 data (downloaded sources and generated sets)
+data/raw/
+data/v1/
+artifacts/

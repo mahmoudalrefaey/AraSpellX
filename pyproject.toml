@@ -3,7 +3,7 @@ name = "araspell"
 version = "0.1.0"
 description = "Arabic Spelling Correction with Transformer seq2seq"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "torch==2.3.0+cu121",
     "torchvision==0.18.0+cu121",
@@ -15,6 +15,15 @@ dependencies = [
     "numpy==1.26.4",
     "setuptools<81",
     "editdistance>=0.8.1",
+    "transformers>=4.44,<5",
+    "tokenizers>=0.22.2",
+    "onnx>=1.19.0",
+    "onnxruntime>=1.18,<1.24",
+    "rapidfuzz>=3.14.5",
+    "mwparserfromhell>=0.7.2",
+    "kaggle>=1.7.4.5",
+    "pytest>=9.1.1",
+    "ml-dtypes>=0.5",
 ]
 
 [[tool.uv.index]]
