@@ -104,7 +104,13 @@ python -m araspellx.data.pretrain_corpus --tests data/v1/testsets data/raw/nod/g
 
 ## Training
 
-Both stages save a checkpoint every 20 minutes and resume when the same command is run again. Run the short check first.
+Both stages:
+- save a checkpoint every 20 minutes and resume when the same command is run again
+- show a live progress bar (loss, accuracy, learning rate, throughput, GPU memory)
+- write timestamped messages to `train.log` and charts to TensorBoard (`logs/`) in the output folder
+- choose the precision for the GPU (`--precision auto`: bf16 on RTX 30xx/A100, fp16 on T4)
+
+Run the short check first.
 
 ```bash
 # Pretraining (masked characters)
@@ -115,6 +121,8 @@ python -m araspellx.train.pretrain --out artifacts/pretrain --max_steps 40000
 python -m araspellx.train.correct --out artifacts/correct_check --max_steps 600 --eval_every 300
 python -m araspellx.train.correct --out artifacts/correct --max_steps 30000
 ```
+
+To train on a cloud GPU, see [Training on Azure](docs/training-on-azure.md).
 
 ## Roadmap to v1
 
