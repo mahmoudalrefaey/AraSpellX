@@ -122,8 +122,6 @@ python -m araspellx.train.correct --out artifacts/correct_check --max_steps 600 
 python -m araspellx.train.correct --out artifacts/correct --max_steps 30000
 ```
 
-To train on a cloud GPU, see [Training on Azure](docs/training-on-azure.md).
-
 ## Roadmap to v1
 
 - [x] Character set, normalization with offset mapping, Hugging Face tokenizer
