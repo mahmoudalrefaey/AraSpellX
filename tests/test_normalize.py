@@ -54,3 +54,14 @@ def test_diacritics_kept_unless_requested():
     text = f"ك{FATHA}تب"
     assert normalize(text).text == text
     assert normalize(text, remove_diacritics=True).text == "كتب"
+
+
+def test_base_letter_plus_combining_hamza_is_composed():
+    hamza_above = chr(0x0654)
+    text = f"{ALEF}{hamza_above}ن {ALEF}{hamza_above}"  # how some sources store "أن أ"
+    result = normalize(text)
+    assert result.text == f"{chr(0x0623)}ن {chr(0x0623)}"
+    assert [(e.start, e.end, e.replacement) for e in result.edits] == [(0, 2, chr(0x0623)), (4, 6, chr(0x0623))]
+    assert result.to_original(0, 1) == (0, 2)  # the composed letter covers both original characters
+    assert result.to_original(1, 2) == (2, 3)
+    assert normalize(text, protected=[(0, 2)]).text.startswith(f"{ALEF}{hamza_above}")

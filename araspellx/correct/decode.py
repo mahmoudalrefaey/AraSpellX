@@ -14,8 +14,8 @@ from typing import List, Sequence, Tuple
 
 import torch
 
-from araspellx.data.labels import KEEP, Labels, LabelVocab, apply_labels, make_label, parse_label
-from araspellx.text.charset import CLS, PAD, SEP, TOKEN_TO_ID, is_editable
+from araspellx.data.labels import KEEP, Labels, LabelVocab, allowed_label, apply_labels, make_label, parse_label
+from araspellx.text.charset import CLS, PAD, SEP, TOKEN_TO_ID
 from araspellx.text.tokenizer import encode_chars
 
 WINDOW = 512
@@ -42,13 +42,13 @@ class Prediction:
 
 
 def at_threshold(prediction: Prediction, text: str, threshold: float) -> Labels:
-    """The edits whose probability reaches `threshold`; everything else is kept."""
-    chars = [KEEP if label == KEEP or p < threshold or not is_editable(char) else label
-             for char, label, p in zip(text, prediction.chars, prediction.probs)]
+    """The allowed edits whose probability reaches `threshold`; everything else is kept."""
+    chars = [allowed_label(text, i, label) if p >= threshold else KEEP
+             for i, (label, p) in enumerate(zip(prediction.chars, prediction.probs))]
     cls = prediction.cls
     if prediction.cls_prob < threshold or parse_label(cls)[0] != KEEP:  # [CLS] can only insert
         cls = make_label(KEEP)
-    return Labels(cls, chars)
+    return Labels(allowed_label(text, -1, cls), chars)
 
 
 def predict_labels(model, texts: Sequence[str], vocab: LabelVocab, device,

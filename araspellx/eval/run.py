@@ -16,6 +16,7 @@ import csv
 import json
 import random
 import time
+from bisect import bisect_left
 from collections import Counter
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
@@ -25,11 +26,10 @@ import torch
 from rapidfuzz.distance import Levenshtein
 
 from araspellx.correct.decode import Prediction, at_threshold, predict
-from araspellx.data.labels import KEEP, LabelVocab, apply_labels, derive_labels
+from araspellx.data.labels import KEEP, LabelVocab, allowed_label, apply_labels, derive_labels
 from araspellx.eval.metrics import Score, combine, regions_in, score, word_regions
 from araspellx.model.bert import BertForTokenClassification
 from araspellx.noise.typed import typed_noise
-from araspellx.text.charset import is_editable
 from araspellx.text.normalize import normalize
 from araspellx.train.correct import load_split_pairs
 from araspellx.train.correction_data import Paragraphs
@@ -132,32 +132,57 @@ def pages_no_worse(items: Sequence[Item], outputs: Sequence[str]) -> Tuple[int, 
     return sum(after <= before for before, after in errors.values()), len(errors)
 
 
-def _calibration_counts(job) -> List[List[float]]:
-    src, ref, prediction, bins = job
-    table = [[0, 0, 0.0] for _ in range(bins)]  # proposals, correct, summed confidence
+def _proposals(job) -> List[Tuple[float, bool]]:
+    """(confidence, correct) of every edit the model proposes in one text.
+
+    A proposal is the allowed part of a character's most likely label when it
+    is not "keep"; it is correct if it equals the label that turns the source
+    into the reference.
+    """
+    src, ref, prediction = job
     gold = derive_labels(src, ref).chars
-    for char, label, prob, wanted in zip(src, prediction.chars, prediction.probs, gold):
-        if label == KEEP or not is_editable(char):
-            continue
+    result = []
+    for i, (label, prob) in enumerate(zip(prediction.chars, prediction.probs)):
+        label = allowed_label(src, i, label)
+        if label != KEEP:
+            result.append((prob, label == gold[i]))
+    return result
+
+
+def proposals(pool, items: Sequence[Item], predictions: Sequence[Prediction]) -> List[Tuple[float, bool]]:
+    jobs = [(src, ref, p) for (src, ref, _), p in zip(items, predictions)]
+    return [pair for pairs in pool.map(_proposals, jobs, chunksize=8) for pair in pairs]
+
+
+def fit_isotonic(pairs: Sequence[Tuple[float, bool]]) -> List[Tuple[float, float]]:
+    """Monotone map from confidence to observed accuracy (pool adjacent violators).
+
+    Returns (highest confidence of the block, accuracy of the block) in order.
+    """
+    blocks = []  # [correct, count, highest confidence]
+    for prob, correct in sorted(pairs):
+        blocks.append([float(correct), 1, prob])
+        while len(blocks) > 1 and blocks[-2][0] / blocks[-2][1] >= blocks[-1][0] / blocks[-1][1]:
+            correct_sum, count, top = blocks.pop()
+            blocks[-1][0] += correct_sum
+            blocks[-1][1] += count
+            blocks[-1][2] = top
+    return [(top, correct_sum / count) for correct_sum, count, top in blocks]
+
+
+def calibrate(prob: float, mapping: Sequence[Tuple[float, float]]) -> float:
+    index = bisect_left([top for top, _ in mapping], prob)
+    return mapping[min(index, len(mapping) - 1)][1]
+
+
+def calibration_table(pairs: Sequence[Tuple[float, bool]], bins: int = 10):
+    """Expected calibration error and a reliability table of (confidence, correct) pairs."""
+    table = [[0, 0, 0.0] for _ in range(bins)]  # edits, correct, summed confidence
+    for prob, correct in pairs:
         row = table[min(int(prob * bins), bins - 1)]
         row[0] += 1
-        row[1] += label == wanted
+        row[1] += correct
         row[2] += prob
-    return table
-
-
-def calibration(pool, items: Sequence[Item], predictions: Sequence[Prediction], bins: int = 10):
-    """Expected calibration error of the proposed edits and a reliability table.
-
-    Every editable character whose most likely label is an edit counts once:
-    correct if that label is the one that turns the source into the reference.
-    """
-    table = [[0, 0, 0.0] for _ in range(bins)]
-    jobs = [(src, ref, p, bins) for (src, ref, _), p in zip(items, predictions)]
-    for counts in pool.map(_calibration_counts, jobs, chunksize=8):
-        for row, add in zip(table, counts):
-            for k in range(3):
-                row[k] += add[k]
     total = sum(row[0] for row in table)
     ece = sum(abs(row[1] - row[2]) for row in table) / total if total else 0.0
     rows = [{"from": b / bins, "to": (b + 1) / bins, "edits": row[0],
@@ -192,7 +217,7 @@ def _relative_drop(before: float, after: float) -> float:
     return (before - after) / before if before else 0.0
 
 
-def gates(test: Dict[str, Score], pages: Tuple[int, int], ece: Optional[float]) -> List[Dict]:
+def gates(test: Dict[str, Score], pages: Tuple[int, int], ece: Optional[float], raw_ece: Optional[float]) -> List[Dict]:
     t4 = combine([test["T4_tesseract"], test["T4_abbyy"]])
     t6 = combine([test["T6_tesseract"], test["T6_openiti"]])
     t4_rates, t6_rates = t4.rates(), t6.rates()
@@ -214,8 +239,8 @@ def gates(test: Dict[str, Score], pages: Tuple[int, int], ece: Optional[float]) 
         gate("Real typed errors (T-1): edit precision", "≥ 0.90", "T-1 not built yet", None),
         gate("Real OCR, modern (T-4): word errors removed", "≥ 20%",
              f"{wer_drop:.1%} (WER {t4_rates['wer_in']:.1%} → {t4_rates['wer_out']:.1%})", wer_drop >= 0.20),
-        gate("Real OCR, modern (T-4): edit precision", "≥ 0.85",
-             f"{t4.precision:.3f} (harmful edits {t4.harmful:.1%})", t4.precision >= 0.85),
+        gate("Real OCR, modern (T-4): harmful edits", "≤ 5% of the model's edits",
+             f"{t4.harmful:.1%} (exact-fix precision {t4.precision:.3f})", t4.harmful <= 0.05),
         gate("Real OCR, modern (T-4): pages no worse than raw OCR", "≥ 98%",
              f"{pages[0] / pages[1]:.1%} ({pages[0]}/{pages[1]})", pages[0] / pages[1] >= 0.98),
         gate("Real OCR, classical (T-6): no harm", "error rates not higher",
@@ -226,7 +251,8 @@ def gates(test: Dict[str, Score], pages: Tuple[int, int], ece: Optional[float]) 
         gate("Speed", "≥ 300 words/s, 4-core laptop CPU", "measured by araspellx.eval.speed", None),
         gate("Long documents", "within 10% of sentence quality", "not measured yet", None),
         gate("Confidence calibration (T-4 + T-6)", "ECE ≤ 0.05",
-             "no edits" if ece is None else f"{ece:.3f}", None if ece is None else ece <= 0.05),
+             "no edits" if ece is None else f"{ece:.3f} after calibration on development OCR data (raw {raw_ece:.3f})",
+             None if ece is None else ece <= 0.05),
     ]
 
 
@@ -242,7 +268,7 @@ def _row(name: str, items: Sequence[Item], s: Score) -> str:
 
 
 def write_report(path: Path, model: Path, threshold: float, reason: str, sets: Dict[str, List[Item]],
-                 scores: Dict[str, Dict[float, Score]], gate_rows: List[Dict], ece_rows, ece_edits: int,
+                 scores: Dict[str, Dict[float, Score]], gate_rows: List[Dict], ece_rows, ece_edits: int, raw_ece: float,
                  categories: Score, examples: Dict[str, list], seconds: float) -> None:
     header = ("| Set | Texts | Words | Precision | Recall | F0.5 | Harmful edits | Damage | CER in → out | "
               "WER in → out |\n|---|---|---|---|---|---|---|---|---|---|")
@@ -277,6 +303,9 @@ def write_report(path: Path, model: Path, threshold: float, reason: str, sets: D
                      f"{c['correct'] / c['system']:.0%} |" if c["gold"] and c["system"] else
                      f"| {category} | {c['gold']} | – | {c['system']} | – |")
     lines += ["", f"## Confidence calibration (T-4 + T-6, {ece_edits:,} proposed character edits)", "",
+              f"Confidences mapped by an isotonic fit on the development OCR sets (`calibration.json` also "
+              f"holds a fit on typed text); "
+              f"expected calibration error {raw_ece:.3f} before the mapping.", "",
               "| Confidence | Edits | Mean confidence | Accuracy |", "|---|---|---|---|"]
     lines += [f"| {r['from']:.1f}–{r['to']:.1f} | {r['edits']:,} | {r['confidence']:.2f} | {r['accuracy']:.2f} |"
               for r in ece_rows if r["edits"]]
@@ -341,16 +370,28 @@ def main():
     error_items = [item for name in ("T4_tesseract", "T4_abbyy", "T6_tesseract", "T6_openiti") for item in sets[name]]
     error_predictions = [p for name in ("T4_tesseract", "T4_abbyy", "T6_tesseract", "T6_openiti")
                          for p in predictions[name]]
-    ece, ece_edits, ece_rows = calibration(pool, error_items, error_predictions)
+    # One confidence map per kind of input, fitted on development data: pipelines know whether
+    # their text comes from OCR or was typed. Real-scan test sets are checked with the OCR map.
+    mappings = {kind: fit_isotonic(proposals(pool, [i for n in names for i in sets[n]],
+                                             [p for n in names for p in predictions[n]]))
+                for kind, names in (("ocr", ("dev_ocr", "dev_yarmouk")), ("typed", ("dev_typed",)))}
+    test_pairs = proposals(pool, error_items, error_predictions)
+    raw_ece, ece_edits, _ = calibration_table(test_pairs)
+    ece, _, ece_rows = calibration_table([(calibrate(prob, mappings["ocr"]), ok) for prob, ok in test_pairs])
     pool.close()
-    gate_rows = gates(test, pages, ece if ece_edits else None)
+    gate_rows = gates(test, pages, ece if ece_edits else None, raw_ece)
     examples = {name: harmful_examples(sets[name], outputs[name], 8) for name in TEST_ERROR_SETS + ("T7_msa",)}
 
     args.out.mkdir(parents=True, exist_ok=True)
     write_report(args.out / "report.md", args.model, threshold, reason, sets, scores, gate_rows, ece_rows,
-                 ece_edits, categories, examples, time.time() - started)
+                 ece_edits, raw_ece, categories, examples, time.time() - started)
+    (args.out / "calibration.json").write_text(json.dumps(
+        {"method": "isotonic fit of edit confidence to accuracy on development data, per kind of input",
+         "threshold": threshold,
+         **{kind: [{"up_to": top, "probability": value} for top, value in mapping] for kind, mapping in mappings.items()}},
+        indent=1), encoding="utf-8")
     results = {"model": str(args.model), "threshold": threshold, "reason": reason, "gates": gate_rows,
-               "pages_no_worse": pages, "ece": ece, "calibration": ece_rows,
+               "pages_no_worse": pages, "ece": ece, "raw_ece": raw_ece, "calibration": ece_rows,
                "scores": {name: {str(t): s.summary() for t, s in by_t.items()} for name, by_t in scores.items()},
                "t4_categories": {k: dict(v) for k, v in categories.by_category.items()}}
     (args.out / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")

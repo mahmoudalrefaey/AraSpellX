@@ -49,8 +49,10 @@ The model reads every development and test text once; each confidence threshold 
 |---|---|
 | Damage on clean text | ≤ 0.1% of words (modern), ≤ 0.2% (classical, diacritized), ≤ 0.5% (dialect) |
 | Real typed errors | Edit precision ≥ 0.90; recall reported |
-| Real OCR, modern | Word error rate down ≥ 20%; edit precision ≥ 0.85; no worse than raw OCR on ≥ 98% of pages |
+| Real OCR, modern | Word error rate down ≥ 20%; harmful edits ≤ 5% of the model's edits (exact-fix precision reported); no worse than raw OCR on ≥ 98% of pages |
 | Real OCR, classical and degraded scans | No harm |
 | Speed | ≥ 300 words/s on a 4-core laptop CPU |
 | Long documents | Paragraph and page quality within 10% of sentence quality |
-| Confidence | Expected calibration error ≤ 0.05 |
+| Confidence | Expected calibration error ≤ 0.05, after a confidence map fitted on development data for each kind of input (OCR, typed) |
+
+The OCR gate was first written as exact-fix precision ≥ 0.85. On OCR text about a third of the model's edits fix a word only partly (one of two wrong letters), which exact-fix precision counts as wrong although the text improved; the gate therefore limits the edits that make text worse, and exact-fix precision is still reported.

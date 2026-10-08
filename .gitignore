@@ -134,8 +134,8 @@ dmypy.json
 .pyre/
 
 # AraSpellX v1 data 
-data/
-artifacts/
+/data/
+/artifacts/
 
 # Model checkpoints
 *.pt

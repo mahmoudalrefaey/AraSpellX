@@ -9,12 +9,15 @@ after it:
 The [CLS] token in front of the text carries insertions before the first
 character. Labels are derived by aligning the noisy and clean text
 character by character. Only editable characters (Arabic letters,
-diacritics, tatweel, space) may be changed or followed by insertions;
-everything else is always kept, as the specification requires.
+diacritics, tatweel, space) may be changed or followed by insertions, and
+spacing next to punctuation follows Arabic typography; everything else is
+always kept, as the specification requires (`allowed_label`, applied to
+training labels and to predictions alike).
 """
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +46,41 @@ def parse_label(label: str) -> Tuple[str, str, str]:
     return op, char, insert
 
 
+def _is_mark(char: str) -> bool:
+    """Punctuation or a symbol."""
+    return bool(char) and unicodedata.category(char)[0] in "PS"
+
+
+def _opens(char: str) -> bool:
+    """An opening bracket or quotation mark: it attaches to the word after it."""
+    return bool(char) and unicodedata.category(char) in ("Ps", "Pi")
+
+
+def allowed_label(text: str, i: int, label: str) -> str:
+    """The part of `label` that may be applied to text[i] (i = -1: insertions before text[0]).
+
+    Only editable characters are changed or followed by insertions; the
+    inserted text may restore punctuation that an OCR engine read as a letter.
+    Spacing next to punctuation follows Arabic typography: a mark attaches to
+    the word before it (opening brackets and quotes to the word after), so a
+    space on the attaching side may be removed but never added, and the space
+    on the other side is never removed.
+    """
+    op, replacement, insert = parse_label(label)
+    following = text[i + 1] if i + 1 < len(text) else ""
+    if i >= 0:
+        if not is_editable(text[i]):
+            return KEEP
+        if text[i].isspace() and op != KEEP:
+            previous = text[i - 1] if i > 0 else ""
+            attaches = op == DELETE and ((_is_mark(following) and not _opens(following)) or _opens(previous))
+            if (_is_mark(following) or _is_mark(previous)) and not attaches:
+                op, replacement = KEEP, ""
+    if _is_mark(following) and not _opens(following):
+        insert = insert.rstrip()
+    return make_label(op, replacement, insert)
+
+
 @dataclass
 class Labels:
     """Edit labels of one noisy text: `cls` for the [CLS] token, `chars[i]` for noisy[i]."""
@@ -66,14 +104,9 @@ def derive_labels(noisy: str, clean: str, max_insert: int = 2) -> Labels:
         elif op.tag == "insert":
             inserted_before[op.src_start] += clean[op.dest_start:op.dest_end]
 
-    chars = []
-    for i, char in enumerate(noisy):
-        if not is_editable(char):
-            chars.append(KEEP)
-            continue
-        insert = inserted_before[i + 1][:max_insert]
-        chars.append(make_label(ops[i], replacement[i], insert))
-    cls = make_label(KEEP, insert=inserted_before[0][:max_insert])
+    chars = [allowed_label(noisy, i, make_label(ops[i], replacement[i], inserted_before[i + 1][:max_insert]))
+             for i in range(len(noisy))]
+    cls = allowed_label(noisy, -1, make_label(KEEP, insert=inserted_before[0][:max_insert]))
     return Labels(cls, chars)
 
 
