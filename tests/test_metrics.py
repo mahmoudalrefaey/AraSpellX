@@ -37,6 +37,15 @@ def test_wrong_fix_and_damage_are_counted():
     assert result.recall == pytest.approx(3 / 4)
     assert result.correct_words == 2 and result.damaged == 1
     assert result.damage == pytest.approx(0.5)
+    assert (result.improved, result.worsened) == (0, 1)  # التي is no closer to إلى than الي
+    assert result.harmful == pytest.approx(2 / 5)  # the wrong fix and the damaged word
+
+
+def test_partial_fixes_count_as_improved_not_harmful():
+    result = score(["ذهبت الى الاداره"], ["ذهبت إلى الادارة"], ["ذهبت إلى الإدارة"])
+    assert (result.gold, result.system, result.correct) == (2, 2, 1)
+    assert (result.improved, result.worsened) == (1, 0)  # ة fixed, hamza still missing
+    assert result.precision == pytest.approx(0.5) and result.harmful == 0.0
 
 
 @pytest.mark.parametrize("source,target,expected", [

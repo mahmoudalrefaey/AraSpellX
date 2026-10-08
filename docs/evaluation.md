@@ -27,8 +27,19 @@ Raw OCR error rates before any correction:
 Scoring (`araspellx/eval/metrics.py`) works per source word region (a word plus the spaces after it), so merged and split words are handled:
 
 - **Gold edit**: the reference changes the region. **System edit**: the output changes it. **Correct**: the output equals the reference where an edit was needed.
-- **Precision**, **recall** and **F0.5** (precision weighted higher) over edits.
+- **Precision**, **recall** and **F0.5** (precision weighted higher) over edits. Precision counts exact fixes only: a word with two errors of which one is fixed counts as a wrong edit.
+- **Harmful edits**: the share of system edits that changed a correct word or did not bring a wrong word closer to the reference. Edits that fix a word partly count as *improved*, not harmful.
 - **Damage**: the share of correct words the output changed.
+
+References are not perfect (Wikipedia text and OCR ground truth contain spelling errors), so some edits counted as damage or harmful are fixes of the reference itself.
+
+## Running the evaluation
+
+```bash
+python -m araspellx.eval.run --model artifacts/correct/model --out artifacts/eval/correct
+```
+
+The model reads every development and test text once; each confidence threshold (0.5 to 0.98) is then applied to the stored predictions. The threshold is chosen on development data only: the highest mean F0.5 over the development error sets among thresholds that keep damage on clean development text within 0.05% (half the modern-text gate). The frozen test sets are scored at that threshold. `report.md` lists the release gates, every set at every threshold, error categories on real scans, confidence calibration and samples of harmful edits; `results.json` holds all numbers.
 - **CER/WER** before and after correction.
 - Per-category counts (`araspellx/eval/categories.py`): hamza on alef, hamza seat, ta marbuta, alef maqsura, alef after waw, dots, spacing, typo.
 

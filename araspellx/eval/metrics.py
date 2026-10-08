@@ -7,8 +7,14 @@ we read what the reference and the model output made of that region:
 - gold edit:    reference region != source region
 - system edit:  output region != source region
 - correct edit: output region == reference region != source region
+- improved:     a system edit of a wrong word that is not exact but closer
+                to the reference (fewer character differences)
+- worsened:     a system edit of a wrong word that is no closer
 - damage:       a correct source word (reference == source) that the
                 output changed
+
+Precision counts only exact fixes; `harmful` is the share of system edits
+that changed a correct word or did not bring a wrong word closer.
 
 Spaces belong to the word before them, so merging two words is an edit
 of the first word and splitting a word is an edit of that word.
@@ -66,6 +72,8 @@ class Score:
     gold: int = 0
     system: int = 0
     correct: int = 0
+    improved: int = 0        # inexact system edits that brought a wrong word closer
+    worsened: int = 0        # inexact system edits that did not
     correct_words: int = 0   # source words that needed no edit
     damaged: int = 0         # ...of which the output changed
     char_errors_in: int = 0
@@ -93,6 +101,11 @@ class Score:
     def damage(self) -> float:
         return self.damaged / self.correct_words if self.correct_words else 0.0
 
+    @property
+    def harmful(self) -> float:
+        """Share of system edits that changed a correct word or did not improve a wrong one."""
+        return (self.worsened + self.damaged) / self.system if self.system else 0.0
+
     def rates(self) -> Dict[str, float]:
         return {
             "cer_in": self.char_errors_in / max(self.ref_chars, 1),
@@ -103,8 +116,22 @@ class Score:
 
     def summary(self) -> Dict[str, float]:
         return {"precision": self.precision, "recall": self.recall, "f0.5": self.f05,
-                "damage": self.damage, "gold_edits": self.gold, "system_edits": self.system,
-                **self.rates()}
+                "harmful": self.harmful, "damage": self.damage, "gold_edits": self.gold,
+                "system_edits": self.system, "exact": self.correct, "improved": self.improved,
+                "worsened": self.worsened, "damaged": self.damaged, **self.rates()}
+
+
+def combine(scores: Sequence[Score]) -> Score:
+    """One score for several sets (counts are added)."""
+    total = Score()
+    for item in scores:
+        for name in ("gold", "system", "correct", "improved", "worsened", "correct_words", "damaged",
+                     "char_errors_in", "char_errors_out", "word_errors_in", "word_errors_out",
+                     "ref_chars", "ref_words"):
+            setattr(total, name, getattr(total, name) + getattr(item, name))
+        for category, counts in item.by_category.items():
+            total.by_category.setdefault(category, Counter()).update(counts)
+    return total
 
 
 def score(sources: Sequence[str], outputs: Sequence[str], references: Sequence[str],
@@ -121,6 +148,11 @@ def score(sources: Sequence[str], outputs: Sequence[str], references: Sequence[s
             result.system += system
             correct = gold and out == ref
             result.correct += correct
+            if gold and system and not correct:
+                if Levenshtein.distance(out, ref) < Levenshtein.distance(src, ref):
+                    result.improved += 1
+                else:
+                    result.worsened += 1
             if not gold:
                 result.correct_words += 1
                 result.damaged += system
