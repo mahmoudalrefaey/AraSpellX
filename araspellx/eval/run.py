@@ -36,12 +36,13 @@ from araspellx.train.correction_data import Paragraphs
 
 THRESHOLDS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.98)
 DEV_ERROR_SETS = ("dev_typed", "dev_ocr", "dev_yarmouk")
-TEST_ERROR_SETS = ("T4_tesseract", "T4_abbyy", "T6_tesseract", "T6_openiti", "benchmark")
+TEST_ERROR_SETS = ("T1_typed", "T4_tesseract", "T4_abbyy", "T6_tesseract", "T6_openiti", "benchmark")
 DESCRIPTIONS = {
     "dev_clean": "clean held-out paragraphs (damage)",
     "dev_typed": "held-out paragraphs with typed-error noise",
     "dev_ocr": "development share of the OCR training pairs",
     "dev_yarmouk": "Yarmouk development split, real scans",
+    "T1_typed": "T-1 real typed errors: paragraphs before and after spelling fixes in Wikipedia's edit history",
     "T4_tesseract": "T-4 real scans, Tesseract",
     "T4_abbyy": "T-4 real scans, ABBYY",
     "T6_tesseract": "T-6 classical books, Tesseract",
@@ -77,6 +78,9 @@ def load_sets(args) -> Dict[str, List[Item]]:
     sets["dev_ocr"] = [(n, c, "") for n, c in ocr_dev]
     sets["dev_yarmouk"] = [(_norm(r["noisy"]), _norm(r["clean"]), "")
                            for r in _jsonl(args.testsets / "yarmouk_dev.jsonl")]
+    if (args.testsets / "T1_wiki_edits.jsonl").exists():
+        sets["T1_typed"] = [(_norm(r["noisy"]), _norm(r["clean"]), "")
+                            for r in _jsonl(args.testsets / "T1_wiki_edits.jsonl")]
     t4 = _jsonl(args.testsets / "T4_yarmouk_test.jsonl")
     for engine in ("tesseract", "abbyy"):
         sets[f"T4_{engine}"] = [(_norm(r["noisy"]), _norm(r["clean"]), r["id"].rsplit(":", 1)[0])
@@ -236,7 +240,10 @@ def gates(test: Dict[str, Score], pages: Tuple[int, int], ece: Optional[float], 
              f"{test['T7_diacritized'].damage:.3%}", test["T7_diacritized"].damage <= 0.002),
         gate("Damage, dialect text (T-7)", "≤ 0.5%",
              f"{test['T7_dialect'].damage:.3%}", test["T7_dialect"].damage <= 0.005),
-        gate("Real typed errors (T-1): edit precision", "≥ 0.90", "T-1 not built yet", None),
+        gate("Real typed errors (T-1): edit precision", "≥ 0.90",
+             f"{test['T1_typed'].precision:.3f} (recall {test['T1_typed'].recall:.3f}, harmful edits "
+             f"{test['T1_typed'].harmful:.1%})" if "T1_typed" in test else "T-1 not built yet",
+             test["T1_typed"].precision >= 0.90 if "T1_typed" in test else None),
         gate("Real OCR, modern (T-4): word errors removed", "≥ 20%",
              f"{wer_drop:.1%} (WER {t4_rates['wer_in']:.1%} → {t4_rates['wer_out']:.1%})", wer_drop >= 0.20),
         gate("Real OCR, modern (T-4): harmful edits", "≤ 5% of the model's edits",
@@ -380,7 +387,8 @@ def main():
     ece, _, ece_rows = calibration_table([(calibrate(prob, mappings["ocr"]), ok) for prob, ok in test_pairs])
     pool.close()
     gate_rows = gates(test, pages, ece if ece_edits else None, raw_ece)
-    examples = {name: harmful_examples(sets[name], outputs[name], 8) for name in TEST_ERROR_SETS + ("T7_msa",)}
+    examples = {name: harmful_examples(sets[name], outputs[name], 8)
+                for name in TEST_ERROR_SETS + ("T7_msa",) if name in sets}
 
     args.out.mkdir(parents=True, exist_ok=True)
     write_report(args.out / "report.md", args.model, threshold, reason, sets, scores, gate_rows, ece_rows,

@@ -44,7 +44,7 @@ from araspellx.train.progress import Prefetcher, Progress, gpu_memory_gb, precis
 from araspellx.train.stability import cap_attention, max_attention_scores
 
 DEV_SIZE = 300
-ERROR_SETS = ("typed", "ocr_render", "yarmouk_real")  # development sets with errors to fix
+ERROR_SETS = ("typed", "ocr_render", "yarmouk_real", "wiki_edits")  # development sets with errors to fix
 
 
 def is_dev(pair_id_or_text: str) -> bool:
@@ -59,7 +59,7 @@ def load_split_pairs(paths):
             normalized_pairs([r for r in rows if is_dev(r["id"])]))
 
 
-def dev_sets(valid: Paragraphs, ocr_dev, yarmouk_dev):
+def dev_sets(valid: Paragraphs, ocr_dev, yarmouk_dev, edits_dev=()):
     rng = random.Random(1234)
     clean = [valid.sample(rng) for _ in range(DEV_SIZE)]
     return {
@@ -67,6 +67,7 @@ def dev_sets(valid: Paragraphs, ocr_dev, yarmouk_dev):
         "clean": [(c, c) for c in [valid.sample(rng) for _ in range(DEV_SIZE)]],
         "ocr_render": ocr_dev[:DEV_SIZE],
         "yarmouk_real": yarmouk_dev[:DEV_SIZE],
+        "wiki_edits": list(edits_dev)[:DEV_SIZE],
     }
 
 
@@ -100,6 +101,8 @@ def main():
     parser.add_argument("--ocr_pairs", type=Path, nargs="+",
                         default=[Path("data/v1/pairs/ocr_render.jsonl"), Path("data/v1/pairs/yarmouk_train.jsonl")])
     parser.add_argument("--yarmouk_dev", type=Path, default=Path("data/v1/testsets/yarmouk_dev.jsonl"))
+    parser.add_argument("--edits", type=Path, default=Path("data/v1/pairs/wiki_edits_train.jsonl"),
+                        help="real spelling fixes mined from Wikipedia's history (testsets/edits.py), if present")
     parser.add_argument("--out", type=Path, default=Path("artifacts/correct"))
     parser.add_argument("--max_steps", type=int, default=30000)
     parser.add_argument("--batch_size", type=int, default=32, help="512-character windows per step")
@@ -124,9 +127,11 @@ def main():
     paragraphs = Paragraphs(args.text / "train.bin")
     ocr_train, ocr_dev = load_split_pairs([p for p in args.ocr_pairs if p.exists()])
     yarmouk_dev = load_pairs([args.yarmouk_dev]) if args.yarmouk_dev.exists() else []
-    mixture = Mixture(paragraphs, ocr_train)
+    edits_train, edits_dev = load_split_pairs([args.edits]) if args.edits.exists() else ([], [])
+    mixture = Mixture(paragraphs, ocr_train, edits_train)
     messages.append(f"sources {dict(zip(mixture.sources, [round(w, 2) for w in mixture.weights]))} | "
-                    f"{len(ocr_train)} OCR pairs for training, {len(ocr_dev)} for development")
+                    f"{len(ocr_train)} OCR pairs for training, {len(ocr_dev)} for development | "
+                    f"{len(edits_train)} real spelling-fix pairs for training, {len(edits_dev)} for development")
 
     vocab_path = args.out / "labels.json"
     if vocab_path.exists():
@@ -201,7 +206,7 @@ def main():
                 progress.log(f"attention cap: layer {layer} head {head} reached a score of {score:,.0f}; "
                              f"scaled back to {args.attention_cap:.0f}")
 
-    sets = dev_sets(Paragraphs(args.text / "valid.bin"), ocr_dev, yarmouk_dev)
+    sets = dev_sets(Paragraphs(args.text / "valid.bin"), ocr_dev, yarmouk_dev, edits_dev)
     writer = SummaryWriter(args.out / "logs")
     if args.attention_cap:
         check_attention()
