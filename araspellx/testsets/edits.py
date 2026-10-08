@@ -138,8 +138,15 @@ def changed_lines(before: str, after: str) -> List[Tuple[str, str]]:
     return [(o, n) for o, n in zip(old, new) if o != n]
 
 
+PREFIXES = ("ال", "و", "ف", "ب", "ك", "ل")  # adding or removing one is grammar, not spelling
+
+
 def _arabic_word(text: str) -> bool:
     return bool(text) and all(c in ARABIC or c == " " for c in text) and sum(c in ARABIC for c in text) >= 2
+
+
+def _prefix_only(source: str, target: str) -> bool:
+    return any(target == p + source or source == p + target for p in PREFIXES)
 
 
 def spelling_fixes(before: str, after: str) -> Optional[List[Tuple[str, str]]]:
@@ -158,7 +165,8 @@ def spelling_fixes(before: str, after: str) -> Optional[List[Tuple[str, str]]]:
         else:
             return None  # a longer rewrite
         for source, target in pairs:
-            if not (_arabic_word(source) and _arabic_word(target)) or Levenshtein.distance(source, target) > MAX_DISTANCE:
+            if (not (_arabic_word(source) and _arabic_word(target)) or _prefix_only(source, target)
+                    or Levenshtein.distance(source, target) > MAX_DISTANCE):
                 return None
             fixes.append((source, target))
     return fixes if 1 <= len(fixes) <= MAX_CHANGES else None

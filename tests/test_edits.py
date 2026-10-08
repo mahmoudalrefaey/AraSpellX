@@ -23,6 +23,8 @@ def test_spelling_fixes_rejects_content_edits():
     assert spelling_fixes("ذهب الطلاب", "ذهب الطلاب صباحا") is None      # a word added
     assert spelling_fixes("عام 1990", "عام 1991") is None                # not Arabic letters
     assert spelling_fixes("ذهب الطلاب", "ذهب الطلاب") is None             # nothing fixed
+    assert spelling_fixes("لغة فرنسية", "لغة الفرنسية") is None           # the article added: grammar
+    assert spelling_fixes("ثم يستخدم", "ثم ويستخدم") is None              # a conjunction added
 
 
 def test_paragraph_pair_cleans_markup_on_both_sides():
