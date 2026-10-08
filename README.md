@@ -118,7 +118,7 @@ python -m araspellx.train.pretrain --out artifacts/pretrain_check --max_steps 20
 python -m araspellx.train.pretrain --out artifacts/pretrain --max_steps 80000
 
 # Correction (edit labels), starting from the pretrained encoder
-python -m araspellx.train.correct --out artifacts/correct_check --max_steps 600 --eval_every 300
+python -m araspellx.train.correct --out artifacts/correct_check --max_steps 1000 --eval_every 500
 python -m araspellx.train.correct --out artifacts/correct --max_steps 30000
 ```
 
