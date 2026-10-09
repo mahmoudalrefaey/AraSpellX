@@ -89,12 +89,6 @@ uv sync
 
 The model is downloaded from Hugging Face on first use (60 MB) and cached:
 
-```bash
-python -m araspellx.correct.demo                              # web page at http://localhost:8000
-python -m araspellx.correct.demo --text "ذهبت الي الجامعه"     # one text in the terminal
-python -m araspellx.correct.demo --host 0.0.0.0               # also reachable from a phone on the same Wi-Fi
-```
-
 ```python
 from araspellx.correct.corrector import Corrector
 
@@ -106,6 +100,8 @@ for c in result.corrections:  # span in the input, before, after, confidence, ca
 ```
 
 The weights are a standard `BertForTokenClassification`, so `transformers` alone also loads them and returns one edit label per character ([model card](https://huggingface.co/mahmoudalrefaey/AraSpellX)); the package adds normalization, windowing, the editing rules and calibrated confidences.
+
+To try it in the browser, `demo/` has a web page (a Streamlit app) that runs on your computer or for free on Streamlit Community Cloud ([usage](docs/usage.md#try-it-in-the-browser)).
 
 [Usage guide](docs/usage.md): options, outputs, what the model changes and its limitations.
 
@@ -129,8 +125,9 @@ araspellx/
   ocr/          page rendering, degradation and Tesseract (run in the OCR container)
   testsets/     builders of the test sets and the Wikipedia edit miner
   train/        pretraining, correction training, attention cap, progress display
-  correct/      decoding, the Corrector and the local demo
+  correct/      decoding and the Corrector
   eval/         evaluation and release gates, metrics, error categories, CPU speed
+demo/           the demo page, a Streamlit app (also hosted on Streamlit Community Cloud)
 docker/ocr/     the pinned OCR environment (Tesseract 5, Arabic fonts, 7-Zip)
 benchmarks/     27 hand-corrected typed sentences
 docs/           usage, architecture, training, data, evaluation
@@ -142,7 +139,7 @@ docs/           usage, architecture, training, data, evaluation
 
 | Document | Covers |
 |---|---|
-| [Usage](docs/usage.md) | installation, the demo, the command line, the Python API, limitations |
+| [Usage](docs/usage.md) | installation, the demo page, the Python API, limitations |
 | [Architecture](docs/architecture.md) | text processing, the model, edit labels, decoding, confidence |
 | [Training](docs/training.md) | the two training stages, settings, safety features, monitoring |
 | [Data](docs/data.md) | sources and licenses, held-out split, building every dataset |
@@ -150,11 +147,11 @@ docs/           usage, architecture, training, data, evaluation
 
 ## Roadmap
 
-Done: data pipeline, test sets T-1, T-4, T-6 and T-7, the model trained in two stages, evaluation against the release gates with confidence calibration, the `Corrector` and a local demo, and the model with its card on [Hugging Face](https://huggingface.co/mahmoudalrefaey/AraSpellX).
+Done: data pipeline, test sets T-1, T-4, T-6 and T-7, the model trained in two stages, evaluation against the release gates with confidence calibration, the `Corrector` and the demo page, and the model with its card on [Hugging Face](https://huggingface.co/mahmoudalrefaey/AraSpellX).
 
 Next:
 
-- **Release**: a pip-installable helper package (apply, suggest and flag modes, ONNX inference on CPU) and a demo Space on Hugging Face. The model and its card are published.
+- **Release**: a pip-installable helper package (apply, suggest and flag modes, ONNX inference on CPU) and the online demo on Streamlit Community Cloud ([usage](docs/usage.md)). The model and its card are published.
 - **Protection rules**: leave Quranic text, spans marked by the caller and words with two accepted spellings (مسؤول/مسئول, مائة/مئة) untouched.
 - **Remaining measurements**: degraded scans (T-5, builder ready), long documents, and an audit of 200 T-1 pairs to publish the share of true spelling fixes.
 - **Better OCR correction**: drop rendered OCR pairs from unreadable pages (8.4% of them are above 50% character error rate), more real scanned text, and a larger or more modern encoder within the CPU speed target.

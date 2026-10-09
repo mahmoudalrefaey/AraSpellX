@@ -1,6 +1,6 @@
 # Using AraSpellX
 
-This guide covers installing AraSpellX and correcting text with a trained model: in the browser, on the command line and from Python.
+This guide covers installing AraSpellX and correcting text with a trained model: in the browser and from Python.
 
 ## Installation
 
@@ -16,7 +16,7 @@ A GPU is optional for correcting text; the model is small enough for a CPU.
 
 ## The model
 
-The released model is on Hugging Face as [`mahmoudalrefaey/AraSpellX`](https://huggingface.co/mahmoudalrefaey/AraSpellX). Wherever a model is expected you can give either that id, which is downloaded once (60 MB) and cached, or a local folder, such as a model you trained yourself ([training](training.md)). The demo uses `artifacts/correct/best_model` when that folder exists and the Hugging Face model otherwise. A model folder holds:
+The released model is on Hugging Face as [`mahmoudalrefaey/AraSpellX`](https://huggingface.co/mahmoudalrefaey/AraSpellX). Wherever a model is expected you can give either that id, which is downloaded once (60 MB) and cached, or a local folder, such as a model you trained yourself ([training](training.md)). A model folder holds:
 
 | File | Content |
 |---|---|
@@ -29,49 +29,25 @@ Without `calibration.json` the model still works: confidences are the raw probab
 
 ## Try it in the browser
 
-```bash
-python -m araspellx.correct.demo
-```
+`demo/streamlit_app.py` is a web page to try the model, a [Streamlit](https://streamlit.io) app that uses the Hugging Face model (downloaded on the first visit). Type or paste Arabic text, up to 5,000 characters, choose **نص مكتوب** (typed text) or **نص من مسح ضوئي** (OCR output), optionally change the confidence threshold, and press **صحّح**. The page shows the text before (errors in red) and after (corrections in green; hover for the original word and the confidence), and a table of every correction with its confidence and error type.
 
-This starts a small web page at **http://localhost:8000** and opens it. Type or paste Arabic text, choose **نص مكتوب** (typed text) or **نص من مسح ضوئي** (OCR output) and press **صحّح**. The page shows the text before (errors in red) and after (corrections in green; hover for the original word and the confidence), and a table of every correction with its confidence and error type. The page runs locally: the text never leaves the computer. Stop it with Ctrl+C.
-
-## Command line
+To run it on your computer, in a fresh virtual environment (not the project's `.venv`, whose CUDA PyTorch it would replace):
 
 ```bash
-python -m araspellx.correct.demo --text "ذهبت الي الجامعه"   # correct one text
-python -m araspellx.correct.demo --cli                       # correct texts one after another
+pip install -r demo/requirements.txt
+streamlit run demo/streamlit_app.py      # opens http://localhost:8501
 ```
 
-Output for the sentence used in the demo's first example (model of the current evaluation):
+## Online demo on Streamlit Community Cloud
 
-```text
-ذهبت إلى الجامعة صباحا لكي أحضر المحاضرة الأولى، ثم قابلت صديقي في المكتبة.
-  الي -> إلى   (98%, mixed, characters 5-8)
-  الجامعه -> الجامعة   (100%, ta_marbuta, characters 9-16)
-  احضر -> أحضر   (94%, hamza_alef, characters 27-31)
-  ...
-```
+[Streamlit Community Cloud](https://share.streamlit.io) hosts the page for free straight from the GitHub repository, without Docker. To publish it:
 
-| Option | Meaning |
-|---|---|
-| `--model PATH_OR_ID` | model folder or Hugging Face id (default: `artifacts/correct/best_model` if it exists, else `mahmoudalrefaey/AraSpellX`) |
-| `--source typed\|ocr` | kind of input; selects the confidence calibration (default `typed`) |
-| `--threshold X` | minimum confidence for an edit (default: the one in `calibration.json`, else 0.9) |
-| `--device cpu\|cuda` | default: CUDA when available |
-| `--port N`, `--no_browser` | web page settings |
-| `--host 0.0.0.0` | make the page reachable from other devices on the network (see below) |
+1. Push the branch with the `demo/` folder to GitHub.
+2. Sign in to [share.streamlit.io](https://share.streamlit.io) with GitHub and choose **Create app** → **Deploy a public app from GitHub**.
+3. Repository `mahmoudalrefaey/AraSpellX`, branch `v1`, main file path `demo/streamlit_app.py`; pick the app address, and under **Advanced settings** Python 3.12.
+4. **Deploy.** The first build takes several minutes; later pushes to the branch update the app by themselves.
 
-Terminals often display Arabic left to right or with disconnected letters; the web page shows it correctly.
-
-## From a phone or another computer
-
-The page works in a phone's browser while the model runs on a laptop or server:
-
-```bash
-python -m araspellx.correct.demo --host 0.0.0.0
-```
-
-The terminal prints the address to open on a phone on the same Wi-Fi, such as `http://192.168.1.3:8000`. Windows asks once whether Python may accept connections; allow it on private networks only. The page has no login, so anyone on the network can use it while it runs; the text is processed on the computer running the demo. Running the model on the phone itself, offline, is not supported yet.
+Community Cloud installs `demo/requirements.txt` (CPU-only PyTorch) rather than the repository's `uv.lock`. An app that has had no visitors for 12 hours goes to sleep, and the next visitor wakes it up. The text is processed on Streamlit's servers and is not saved.
 
 ## Python
 
@@ -113,7 +89,7 @@ Out of scope: grammar (agreement, case endings, verb moods), punctuation and sty
 
 ## Speed
 
-On a laptop CPU (Intel i5-10500H, 4 threads), the model exported to ONNX processes **337 words/s** (fp32) or **410 words/s** (int8), measured with `python -m araspellx.eval.speed --configs 8x384 --threads 4`. The demo and the `Corrector` run PyTorch: on the same CPU they load the model in under a second, correct a sentence in about 20 ms and long text at about 270–300 words/s (4–6 threads). ONNX inference in the helper package is planned.
+On a laptop CPU (Intel i5-10500H, 4 threads), the model exported to ONNX processes **337 words/s** (fp32) or **410 words/s** (int8), measured with `python -m araspellx.eval.speed --configs 8x384 --threads 4`. The `Corrector` runs PyTorch: on the same CPU it loads the model in under a second, corrects a sentence in about 20 ms and long text at about 270–300 words/s (4–6 threads). ONNX inference in the helper package is planned.
 
 ## Limitations
 

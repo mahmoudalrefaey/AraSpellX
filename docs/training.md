@@ -62,7 +62,7 @@ In the check run, the typed-error set should show recall above zero by step 1,00
 
 ## After training
 
-Run the evaluation ([evaluation](evaluation.md)); it chooses the confidence threshold on development data and writes the calibration. Copy the calibration into the model folder so the demo and the `Corrector` use it:
+Run the evaluation ([evaluation](evaluation.md)); it chooses the confidence threshold on development data and writes the calibration. Copy the calibration into the model folder so the `Corrector` uses it:
 
 ```bash
 python -m araspellx.eval.run --model artifacts/correct/best_model --out artifacts/eval/correct

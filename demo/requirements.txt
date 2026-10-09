@@ -1,0 +1,12 @@
+# Packages for the Streamlit demo (streamlit_app.py). Streamlit Community Cloud installs this
+# file instead of the repository's uv.lock, so the app gets the CPU-only PyTorch (about 200 MB
+# instead of the 2.5 GB CUDA build); the other versions are those in uv.lock.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.0+cpu
+transformers==4.57.6
+tokenizers==0.22.2
+safetensors==0.8.0
+huggingface-hub==0.36.2
+numpy==1.26.4
+rapidfuzz==3.14.5
+streamlit==1.65.0
