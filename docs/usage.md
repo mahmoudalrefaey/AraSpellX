@@ -59,8 +59,19 @@ Output for the sentence used in the demo's first example (model of the current e
 | `--threshold X` | minimum confidence for an edit (default: the one in `calibration.json`, else 0.9) |
 | `--device cpu\|cuda` | default: CUDA when available |
 | `--port N`, `--no_browser` | web page settings |
+| `--host 0.0.0.0` | make the page reachable from other devices on the network (see below) |
 
 Terminals often display Arabic left to right or with disconnected letters; the web page shows it correctly.
+
+## From a phone or another computer
+
+The page works in a phone's browser while the model runs on a laptop or server:
+
+```bash
+python -m araspellx.correct.demo --host 0.0.0.0
+```
+
+The terminal prints the address to open on a phone on the same Wi-Fi, such as `http://192.168.1.3:8000`. Windows asks once whether Python may accept connections; allow it on private networks only. The page has no login, so anyone on the network can use it while it runs; the text is processed on the computer running the demo. Running the model on the phone itself, offline, is not supported yet.
 
 ## Python
 
@@ -102,7 +113,7 @@ Out of scope: grammar (agreement, case endings, verb moods), punctuation and sty
 
 ## Speed
 
-On a laptop CPU (Intel i5-10500H, 4 threads), the model exported to ONNX processes **337 words/s** (fp32) or **410 words/s** (int8), measured with `python -m araspellx.eval.speed --configs 8x384 --threads 4`. The demo and the `Corrector` run PyTorch; ONNX inference in the helper package is planned.
+On a laptop CPU (Intel i5-10500H, 4 threads), the model exported to ONNX processes **337 words/s** (fp32) or **410 words/s** (int8), measured with `python -m araspellx.eval.speed --configs 8x384 --threads 4`. The demo and the `Corrector` run PyTorch: on the same CPU they load the model in under a second, correct a sentence in about 20 ms and long text at about 270–300 words/s (4–6 threads). ONNX inference in the helper package is planned.
 
 ## Limitations
 

@@ -96,6 +96,9 @@ class Corrector:
     def __init__(self, model_dir: Union[str, Path], device: Optional[str] = None,
                  threshold: Optional[float] = None, calibration: Optional[Union[str, Path]] = None) -> None:
         model_dir = Path(model_dir)
+        if not (model_dir / "config.json").is_file():
+            raise FileNotFoundError(f"no model in '{model_dir}': expected a folder with config.json, "
+                                    "model.safetensors and labels.json, such as artifacts/correct/best_model")
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = BertForTokenClassification.from_pretrained(model_dir).to(self.device).eval()
         self.vocab = LabelVocab.load(model_dir / "labels.json")

@@ -3,6 +3,7 @@
     python -m araspellx.correct.demo                         # web page at http://localhost:8000
     python -m araspellx.correct.demo --text "ذهبت الي الجامعه"  # one text in the terminal
     python -m araspellx.correct.demo --cli                   # type texts in the terminal
+    python -m araspellx.correct.demo --host 0.0.0.0          # also reachable from a phone on the same Wi-Fi
 
 The web page shows Arabic right to left; terminals often do not. Everything
 runs locally: the text never leaves the computer.
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import socket
 import time
 import urllib.parse
 import webbrowser
@@ -32,7 +34,7 @@ EXAMPLES = [
 ]
 
 PAGE = """<!doctype html>
-<html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>AraSpellX</title>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AraSpellX</title>
 <style>
  body {{ font-family: "Segoe UI", Tahoma, sans-serif; max-width: 920px; margin: 2em auto; padding: 0 1em; background: #fafafa; color: #222; }}
  h1 {{ margin-bottom: 0.2em; }} .sub {{ color: #666; margin-top: 0; }}
@@ -88,7 +90,7 @@ def render_result(text: str, result: Result, seconds: float) -> str:
             f"<table><tr><th>#</th><th>قبل</th><th>بعد</th><th>الثقة</th><th>النوع</th></tr>{rows}</table>")
 
 
-def serve(corrector: Corrector, port: int, model: Path, open_browser: bool) -> None:
+def serve(corrector: Corrector, host: str, port: int, model: Path, open_browser: bool) -> None:
     def page(text: str = "", source: str = "typed", threshold: float = corrector.threshold, result: str = "") -> bytes:
         examples = " ".join(f'<button type="button" class="ex" onclick="ex({html.escape(repr(t))})">{name}</button>'
                             for name, t in EXAMPLES)
@@ -125,9 +127,25 @@ def serve(corrector: Corrector, port: int, model: Path, open_browser: bool) -> N
 
     url = f"http://localhost:{port}"
     print(f"AraSpellX demo running at {url}  (Ctrl+C to stop)", flush=True)
+    if host not in ("127.0.0.1", "localhost"):
+        address = network_address()
+        print(f"Other devices on this network (a phone on the same Wi-Fi) can open "
+              f"http://{address or '<this computer address>'}:{port}", flush=True)
     if open_browser:
         webbrowser.open(url)
-    HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    HTTPServer((host, port), Handler).serve_forever()
+
+
+def network_address():
+    """This computer's address on the local network (no data is sent)."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("10.255.255.255", 1))
+        return probe.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        probe.close()
 
 
 def show(corrector: Corrector, text: str, source: str) -> None:
@@ -147,11 +165,17 @@ def main():
     parser.add_argument("--source", choices=["typed", "ocr"], default="typed")
     parser.add_argument("--threshold", type=float, default=None, help="default: the one chosen by the evaluation")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="0.0.0.0 makes the page reachable from other devices on the network (no login: "
+                             "anyone on the network can use it)")
     parser.add_argument("--no_browser", action="store_true")
     parser.add_argument("--device", default=None, help="cpu or cuda (default: cuda if available)")
     args = parser.parse_args()
 
-    corrector = Corrector(args.model, device=args.device, threshold=args.threshold)
+    try:
+        corrector = Corrector(args.model, device=args.device, threshold=args.threshold)
+    except FileNotFoundError as error:
+        raise SystemExit(f"AraSpellX: {error}")
     if args.text:
         show(corrector, args.text, args.source)
     elif args.cli:
@@ -159,7 +183,7 @@ def main():
         while text := input("> ").strip():
             show(corrector, text, args.source)
     else:
-        serve(corrector, args.port, args.model, not args.no_browser)
+        serve(corrector, args.host, args.port, args.model, not args.no_browser)
 
 
 if __name__ == "__main__":
