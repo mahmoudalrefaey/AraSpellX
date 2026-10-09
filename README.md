@@ -14,9 +14,10 @@
   <img src="https://img.shields.io/badge/Model-character--level%20BERT%2C%2015.1M-purple" alt="Character-level BERT, 15.1M parameters">
   <img src="https://img.shields.io/badge/Status-pre--release-orange" alt="Pre-release">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT">
+  <a href="https://huggingface.co/mahmoudalrefaey/AraSpellX"><img src="https://img.shields.io/badge/Hugging%20Face-mahmoudalrefaey%2FAraSpellX-yellow" alt="Model on Hugging Face"></a>
 </p>
 
-> **Status: pre-release.** The pipeline, the model and its evaluation are complete, and the current model passes 9 of the 11 release gates measured so far. Typed spelling errors are corrected precisely; OCR correction is safe but not yet strong enough. No model is published yet: train one with this repository ([training](docs/training.md)).
+> **Status: pre-release.** The model is published on Hugging Face as [`mahmoudalrefaey/AraSpellX`](https://huggingface.co/mahmoudalrefaey/AraSpellX), with a [model card](https://huggingface.co/mahmoudalrefaey/AraSpellX) covering its training, results and limitations. It passes 9 of the 11 release gates measured so far: typed spelling errors are corrected precisely; OCR correction is safe but not yet strong enough.
 
 ## What it does
 
@@ -86,21 +87,25 @@ git clone -b v1 https://github.com/mahmoudalrefaey/AraSpellX.git && cd AraSpellX
 uv sync
 ```
 
-With a trained model in `artifacts/correct/best_model`:
+The model is downloaded from Hugging Face on first use (60 MB) and cached:
 
 ```bash
 python -m araspellx.correct.demo                              # web page at http://localhost:8000
 python -m araspellx.correct.demo --text "ذهبت الي الجامعه"     # one text in the terminal
+python -m araspellx.correct.demo --host 0.0.0.0               # also reachable from a phone on the same Wi-Fi
 ```
 
 ```python
 from araspellx.correct.corrector import Corrector
 
-result = Corrector("artifacts/correct/best_model").correct("ذهبت الي الجامعه", source="typed")
+corrector = Corrector("mahmoudalrefaey/AraSpellX")             # or a local model folder
+result = corrector.correct("ذهبت الي الجامعه", source="typed")   # source="ocr" for OCR output
 print(result.text)            # ذهبت إلى الجامعة
 for c in result.corrections:  # span in the input, before, after, confidence, category
     print(c.start, c.end, c.original, c.replacement, c.confidence, c.category)
 ```
+
+The weights are a standard `BertForTokenClassification`, so `transformers` alone also loads them and returns one edit label per character ([model card](https://huggingface.co/mahmoudalrefaey/AraSpellX)); the package adds normalization, windowing, the editing rules and calibrated confidences.
 
 [Usage guide](docs/usage.md): options, outputs, what the model changes and its limitations.
 
@@ -145,11 +150,11 @@ docs/           usage, architecture, training, data, evaluation
 
 ## Roadmap
 
-Done: data pipeline, test sets T-1, T-4, T-6 and T-7, the model trained in two stages, evaluation against the release gates with confidence calibration, the `Corrector` and a local demo.
+Done: data pipeline, test sets T-1, T-4, T-6 and T-7, the model trained in two stages, evaluation against the release gates with confidence calibration, the `Corrector` and a local demo, and the model with its card on [Hugging Face](https://huggingface.co/mahmoudalrefaey/AraSpellX).
 
 Next:
 
-- **Release**: a pip-installable helper package (apply, suggest and flag modes, ONNX inference on CPU), a model card with every gate result and known failure modes, the model on Hugging Face and a demo Space.
+- **Release**: a pip-installable helper package (apply, suggest and flag modes, ONNX inference on CPU) and a demo Space on Hugging Face. The model and its card are published.
 - **Protection rules**: leave Quranic text, spans marked by the caller and words with two accepted spellings (مسؤول/مسئول, مائة/مئة) untouched.
 - **Remaining measurements**: degraded scans (T-5, builder ready), long documents, and an audit of 200 T-1 pairs to publish the share of true spelling fixes.
 - **Better OCR correction**: drop rendered OCR pairs from unreadable pages (8.4% of them are above 50% character error rate), more real scanned text, and a larger or more modern encoder within the CPU speed target.
@@ -163,4 +168,4 @@ Next:
 
 ## License
 
-The code is released under the [MIT License](LICENSE). Data keeps the license of its source (see [data](docs/data.md)); the license of the trained model will be set when it is released.
+The code and the published model are released under the [MIT License](LICENSE). Data keeps the license of its source (see [data](docs/data.md)).

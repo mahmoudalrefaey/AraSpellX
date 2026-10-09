@@ -9,6 +9,7 @@ correction covering both.
 from __future__ import annotations
 
 import json
+import re
 import string
 from bisect import bisect_left
 from dataclasses import dataclass, field
@@ -86,19 +87,32 @@ def build_result(text: str, normalized: Normalized, prediction: Prediction, thre
     return result
 
 
+HUB_MODEL = "mahmoudalrefaey/AraSpellX"  # the released model on Hugging Face
+REPO_ID = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
+
+
 class Corrector:
     """A trained correction model ready to correct text.
 
-    corrector = Corrector("artifacts/correct/best_model")
+    corrector = Corrector("mahmoudalrefaey/AraSpellX")  # or a local folder such as artifacts/correct/best_model
     result = corrector.correct("ذهبت الي الجامعه", source="typed")  # or source="ocr"
     """
 
-    def __init__(self, model_dir: Union[str, Path], device: Optional[str] = None,
+    def __init__(self, model: Union[str, Path] = HUB_MODEL, device: Optional[str] = None,
                  threshold: Optional[float] = None, calibration: Optional[Union[str, Path]] = None) -> None:
-        model_dir = Path(model_dir)
+        """`model` is a local model folder or a Hugging Face model id (downloaded once, then cached)."""
+        model_dir = Path(model)
+        if not model_dir.exists() and REPO_ID.match(str(model)):
+            from huggingface_hub import snapshot_download
+            try:
+                model_dir = Path(snapshot_download(str(model)))
+            except Exception as error:  # unknown id, private repository, no network
+                raise FileNotFoundError(f"could not download '{model}' from Hugging Face "
+                                        f"({type(error).__name__}); check the model id and the connection") from error
         if not (model_dir / "config.json").is_file():
-            raise FileNotFoundError(f"no model in '{model_dir}': expected a folder with config.json, "
-                                    "model.safetensors and labels.json, such as artifacts/correct/best_model")
+            raise FileNotFoundError(f"no model in '{model}': expected a folder with config.json, "
+                                    "model.safetensors and labels.json, or a Hugging Face model id "
+                                    f"such as {HUB_MODEL}")
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = BertForTokenClassification.from_pretrained(model_dir).to(self.device).eval()
         self.vocab = LabelVocab.load(model_dir / "labels.json")

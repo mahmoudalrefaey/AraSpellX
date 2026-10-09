@@ -19,7 +19,10 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from araspellx.correct.corrector import Corrector, Result
+from araspellx.correct.corrector import HUB_MODEL, Corrector, Result
+
+LOCAL_MODEL = Path("artifacts/correct/best_model")
+MAX_CHARS = 5000  # longest text the web page accepts (about 900 words), so one request cannot hold the server
 
 CATEGORIES = {
     "hamza_alef": "همزة على الألف", "hamza_seat": "كرسي الهمزة", "ta_marbuta": "التاء المربوطة",
@@ -49,7 +52,7 @@ PAGE = """<!doctype html>
 </style></head><body>
 <h1>AraSpellX</h1><p class="sub">تصحيح الأخطاء الإملائية وأخطاء المسح الضوئي في النصوص العربية</p>
 <form method="post">
-<textarea name="text" placeholder="اكتب أو الصق نصا عربيا هنا…">{text}</textarea>
+<textarea name="text" maxlength="{max_chars}" placeholder="اكتب أو الصق نصا عربيا هنا…">{text}</textarea>
 <div class="row">
  <label><input type="radio" name="source" value="typed" {typed}> نص مكتوب</label>
  <label><input type="radio" name="source" value="ocr" {ocr}> نص من مسح ضوئي (OCR)</label>
@@ -91,16 +94,21 @@ def render_result(text: str, result: Result, seconds: float) -> str:
 
 
 def serve(corrector: Corrector, host: str, port: int, model: Path, open_browser: bool) -> None:
+    local = host in ("127.0.0.1", "localhost")
+
     def page(text: str = "", source: str = "typed", threshold: float = corrector.threshold, result: str = "") -> bytes:
         examples = " ".join(f'<button type="button" class="ex" onclick="ex({html.escape(repr(t))})">{name}</button>'
                             for name, t in EXAMPLES)
-        meta = (f"النموذج: {html.escape(str(model))} · الجهاز: {corrector.device} · "
-                f"يعمل محليا، لا يغادر النص هذا الجهاز")
+        privacy = ("يعمل محليا، لا يغادر النص هذا الجهاز" if local
+                   else "يُعالَج النص على الجهاز الذي يشغّل هذه الصفحة ولا يُحفظ")
+        meta = f"النموذج: {html.escape(str(model))} · الجهاز: {corrector.device} · {privacy}"
         return PAGE.format(text=html.escape(text), typed="checked" if source == "typed" else "",
-                           ocr="checked" if source == "ocr" else "", threshold=threshold,
+                           ocr="checked" if source == "ocr" else "", threshold=threshold, max_chars=MAX_CHARS,
                            examples=examples, result=result, meta=meta).encode("utf-8")
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = 30  # seconds; a stalled connection would otherwise block the page for everyone
+
         def _send(self, body: bytes) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -112,10 +120,18 @@ def serve(corrector: Corrector, host: str, port: int, model: Path, open_browser:
             self._send(page())
 
         def do_POST(self):
-            form = urllib.parse.parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8"))
-            text = form.get("text", [""])[0]
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 <= length <= 12 * MAX_CHARS:  # an Arabic letter is 6 bytes once form-encoded
+                self.send_error(413, "Text too long")
+                return
+            form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", errors="replace"))
+            text = form.get("text", [""])[0][:MAX_CHARS]
             source = form.get("source", ["typed"])[0]
-            threshold = float(form.get("threshold", [corrector.threshold])[0])
+            source = source if source in ("typed", "ocr") else "typed"
+            try:
+                threshold = min(max(float(form.get("threshold", [corrector.threshold])[0]), 0.5), 0.99)
+            except ValueError:
+                threshold = corrector.threshold
             default, corrector.threshold = corrector.threshold, threshold
             started = time.time()
             result = corrector.correct(text, source)
@@ -127,7 +143,7 @@ def serve(corrector: Corrector, host: str, port: int, model: Path, open_browser:
 
     url = f"http://localhost:{port}"
     print(f"AraSpellX demo running at {url}  (Ctrl+C to stop)", flush=True)
-    if host not in ("127.0.0.1", "localhost"):
+    if not local:
         address = network_address()
         print(f"Other devices on this network (a phone on the same Wi-Fi) can open "
               f"http://{address or '<this computer address>'}:{port}", flush=True)
@@ -159,7 +175,8 @@ def show(corrector: Corrector, text: str, source: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--model", type=Path, default=Path("artifacts/correct/best_model"))
+    parser.add_argument("--model", default=None,
+                        help=f"model folder or Hugging Face model id (default: {LOCAL_MODEL} if it exists, else {HUB_MODEL})")
     parser.add_argument("--text", help="correct this text and exit")
     parser.add_argument("--cli", action="store_true", help="type texts in the terminal")
     parser.add_argument("--source", choices=["typed", "ocr"], default="typed")
@@ -172,6 +189,8 @@ def main():
     parser.add_argument("--device", default=None, help="cpu or cuda (default: cuda if available)")
     args = parser.parse_args()
 
+    if args.model is None:
+        args.model = LOCAL_MODEL if LOCAL_MODEL.exists() else HUB_MODEL
     try:
         corrector = Corrector(args.model, device=args.device, threshold=args.threshold)
     except FileNotFoundError as error:

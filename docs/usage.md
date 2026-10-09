@@ -14,9 +14,9 @@ uv sync          # creates .venv with PyTorch 2.3 (CUDA 12.1 wheels, which also 
 
 A GPU is optional for correcting text; the model is small enough for a CPU.
 
-## The model folder
+## The model
 
-AraSpellX is not published on Hugging Face yet, so you need a model trained with this repository ([training](training.md)). A trained model is a folder like `artifacts/correct/best_model`:
+The released model is on Hugging Face as [`mahmoudalrefaey/AraSpellX`](https://huggingface.co/mahmoudalrefaey/AraSpellX). Wherever a model is expected you can give either that id, which is downloaded once (60 MB) and cached, or a local folder, such as a model you trained yourself ([training](training.md)). The demo uses `artifacts/correct/best_model` when that folder exists and the Hugging Face model otherwise. A model folder holds:
 
 | File | Content |
 |---|---|
@@ -54,7 +54,7 @@ Output for the sentence used in the demo's first example (model of the current e
 
 | Option | Meaning |
 |---|---|
-| `--model PATH` | model folder (default `artifacts/correct/best_model`) |
+| `--model PATH_OR_ID` | model folder or Hugging Face id (default: `artifacts/correct/best_model` if it exists, else `mahmoudalrefaey/AraSpellX`) |
 | `--source typed\|ocr` | kind of input; selects the confidence calibration (default `typed`) |
 | `--threshold X` | minimum confidence for an edit (default: the one in `calibration.json`, else 0.9) |
 | `--device cpu\|cuda` | default: CUDA when available |
@@ -78,7 +78,7 @@ The terminal prints the address to open on a phone on the same Wi-Fi, such as `h
 ```python
 from araspellx.correct.corrector import Corrector
 
-corrector = Corrector("artifacts/correct/best_model")      # device, threshold and calibration are optional
+corrector = Corrector("mahmoudalrefaey/AraSpellX")         # or a local folder; device, threshold and calibration are optional
 result = corrector.correct("ذهبت الي الجامعه", source="typed")
 
 result.text            # the corrected text
