@@ -122,6 +122,23 @@ python -m araspellx.train.correct --out artifacts/correct_check --max_steps 1000
 python -m araspellx.train.correct --out artifacts/correct --max_steps 30000
 ```
 
+## Trying a trained model
+
+```bash
+python -m araspellx.eval.run --model artifacts/correct_v2/best_model --out artifacts/eval/v2   # release gates + calibration.json
+python -m araspellx.correct.demo                       # web page at http://localhost:8000 (runs locally)
+python -m araspellx.correct.demo --text "ذهبت الي الجامعه"   # one text in the terminal
+```
+
+The demo reads `calibration.json` from the model folder (copy it from the evaluation output) to show calibrated confidences. In Python:
+
+```python
+from araspellx.correct.corrector import Corrector
+result = Corrector("artifacts/correct_v2/best_model").correct("ذهبت الي الجامعه", source="typed")
+result.text         # 'ذهبت إلى الجامعة'
+result.corrections  # [Correction(start=5, end=8, original='الي', replacement='إلى', confidence=0.98, category='mixed'), ...]
+```
+
 ## Roadmap to v1
 
 - [x] Character set, normalization with offset mapping, Hugging Face tokenizer
