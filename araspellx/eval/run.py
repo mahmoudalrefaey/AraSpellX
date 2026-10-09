@@ -15,6 +15,7 @@ import argparse
 import csv
 import json
 import random
+import string
 import time
 from bisect import bisect_left
 from collections import Counter
@@ -195,6 +196,55 @@ def calibration_table(pairs: Sequence[Tuple[float, bool]], bins: int = 10):
     return ece, total, rows
 
 
+PUNCTUATION = " " + string.punctuation + "،؛؟«»…"
+
+
+def _targeted(job):
+    """T-1 counts for one paragraph: the words an editor fixed and what the model did to them."""
+    src, ref, out = job
+    regions = word_regions(src)
+    fixed = touched = exact = 0
+    others = []  # edits of words the editor left alone (often errors the editor did not fix)
+    for (a, b), r, o in zip(regions, regions_in(src, ref, regions), regions_in(src, out, regions)):
+        s = src[a:b]
+        if r != s:
+            fixed += 1
+            if o != s:
+                touched += 1
+                exact += o == r
+        elif o != s:
+            others.append((s.strip().strip(PUNCTUATION), o.strip().strip(PUNCTUATION)))
+    return fixed, touched, exact, len(regions), others
+
+
+def known_fixes(path: Path) -> set:
+    """(before, after) word fixes that Wikipedia editors made on training pages."""
+    fixes = set()
+    if path.exists():
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                fixes.update(tuple(fix) for fix in json.loads(line)["fixes"])
+    return fixes
+
+
+def targeted(pool, items: Sequence[Item], outputs: Sequence[str], fixes: set) -> Dict:
+    """T-1 scored on the words the editors fixed: a real edit fixes only some of a paragraph's
+    errors, so the model's other edits cannot be scored against it; they are counted, and
+    checked against the fixes editors made on other pages."""
+    fixed = touched = exact = words = 0
+    others = []
+    for f, t, e, w, o in pool.map(_targeted, [(s, r, out) for (s, r, _), out in zip(items, outputs)], chunksize=8):
+        fixed, touched, exact, words = fixed + f, touched + t, exact + e, words + w
+        others += o
+    attested = [pair in fixes for pair in others]
+    samples = random.Random(0).sample(range(len(others)), min(16, len(others)))
+    return {"fixed": fixed, "touched": touched, "exact": exact, "recall": exact / fixed if fixed else 0.0,
+            "precision": exact / touched if touched else 1.0, "words": words, "other_edits": len(others),
+            "other_per_1000_words": 1000 * len(others) / words if words else 0.0,
+            "other_attested": sum(attested) / len(others) if others else 0.0,
+            "samples": [(*others[i], attested[i]) for i in samples]}
+
+
 def harmful_examples(items: Sequence[Item], outputs: Sequence[str], count: int, seed: int = 0):
     """Edits that changed a correct word or did not bring a wrong word closer: (input, output, reference)."""
     found = []
@@ -221,7 +271,8 @@ def _relative_drop(before: float, after: float) -> float:
     return (before - after) / before if before else 0.0
 
 
-def gates(test: Dict[str, Score], pages: Tuple[int, int], ece: Optional[float], raw_ece: Optional[float]) -> List[Dict]:
+def gates(test: Dict[str, Score], pages: Tuple[int, int], ece: Optional[float], raw_ece: Optional[float],
+          t1: Optional[Dict]) -> List[Dict]:
     t4 = combine([test["T4_tesseract"], test["T4_abbyy"]])
     t6 = combine([test["T6_tesseract"], test["T6_openiti"]])
     t4_rates, t6_rates = t4.rates(), t6.rates()
@@ -240,10 +291,10 @@ def gates(test: Dict[str, Score], pages: Tuple[int, int], ece: Optional[float], 
              f"{test['T7_diacritized'].damage:.3%}", test["T7_diacritized"].damage <= 0.002),
         gate("Damage, dialect text (T-7)", "≤ 0.5%",
              f"{test['T7_dialect'].damage:.3%}", test["T7_dialect"].damage <= 0.005),
-        gate("Real typed errors (T-1): edit precision", "≥ 0.90",
-             f"{test['T1_typed'].precision:.3f} (recall {test['T1_typed'].recall:.3f}, harmful edits "
-             f"{test['T1_typed'].harmful:.1%})" if "T1_typed" in test else "T-1 not built yet",
-             test["T1_typed"].precision >= 0.90 if "T1_typed" in test else None),
+        gate("Real typed errors (T-1): edit precision", "≥ 0.90 on the words editors fixed",
+             f"{t1['precision']:.3f} (recall {t1['recall']:.3f}); elsewhere {t1['other_per_1000_words']:.1f} edits "
+             f"per 1,000 words, {t1['other_attested']:.0%} of them fixes editors made on other pages"
+             if t1 else "T-1 not built yet", t1["precision"] >= 0.90 if t1 else None),
         gate("Real OCR, modern (T-4): word errors removed", "≥ 20%",
              f"{wer_drop:.1%} (WER {t4_rates['wer_in']:.1%} → {t4_rates['wer_out']:.1%})", wer_drop >= 0.20),
         gate("Real OCR, modern (T-4): harmful edits", "≤ 5% of the model's edits",
@@ -276,7 +327,7 @@ def _row(name: str, items: Sequence[Item], s: Score) -> str:
 
 def write_report(path: Path, model: Path, threshold: float, reason: str, sets: Dict[str, List[Item]],
                  scores: Dict[str, Dict[float, Score]], gate_rows: List[Dict], ece_rows, ece_edits: int, raw_ece: float,
-                 categories: Score, examples: Dict[str, list], seconds: float) -> None:
+                 categories: Score, examples: Dict[str, list], seconds: float, t1: Optional[Dict]) -> None:
     header = ("| Set | Texts | Words | Precision | Recall | F0.5 | Harmful edits | Damage | CER in → out | "
               "WER in → out |\n|---|---|---|---|---|---|---|---|---|---|")
     lines = [f"# Evaluation of `{model}`", "",
@@ -289,6 +340,20 @@ def write_report(path: Path, model: Path, threshold: float, reason: str, sets: D
     lines += [f"| {g['gate']} | {g['target']} | {g['measured']} | {g['result']} |" for g in gate_rows]
     lines += ["", f"## Test sets at threshold {threshold}", "", header]
     lines += [_row(name, sets[name], scores[name][threshold]) for name in sets if not name.startswith("dev")]
+    if t1:
+        lines += ["", f"## Real typed errors (T-1) at threshold {threshold}", "",
+                  "Each paragraph records the fixes of one Wikipedia edit; the paragraph's other errors stay in the "
+                  "reference, so the strict scores in the table above count the model's fixes of them as damage. "
+                  "T-1 is therefore scored on the words the editors fixed, and the model's other edits are counted "
+                  "and checked against fixes that editors made on other pages.", "",
+                  f"- Words fixed by the editors: {t1['fixed']:,}; the model fixed {t1['exact']:,} of them exactly "
+                  f"(recall **{t1['recall']:.3f}**)",
+                  f"- Of the {t1['touched']:,} of these words the model changed, {t1['exact']:,} match the editor "
+                  f"(precision **{t1['precision']:.3f}**)",
+                  f"- Other edits: {t1['other_edits']:,} ({t1['other_per_1000_words']:.1f} per 1,000 words); "
+                  f"**{t1['other_attested']:.0%}** are fixes that editors made on other pages", "",
+                  "Samples of other edits (✓: a fix editors made elsewhere):", ""]
+        lines += [f"- {a} → {b} {'✓' if ok else ''}" for a, b, ok in t1["samples"]]
     lines += ["", "## Threshold choice (development data only)", "",
               "| Threshold | Damage on clean text | " + " | ".join(f"{n} P / R" for n in DEV_ERROR_SETS) + " |",
               "|---|---|" + "---|" * len(DEV_ERROR_SETS)]
@@ -334,6 +399,8 @@ def main():
     parser.add_argument("--ocr_pairs", type=Path, nargs="+",
                         default=[Path("data/v1/pairs/ocr_render.jsonl"), Path("data/v1/pairs/yarmouk_train.jsonl")])
     parser.add_argument("--benchmark", type=Path, default=Path("benchmarks/real_world.csv"))
+    parser.add_argument("--edits_train", type=Path, default=Path("data/v1/pairs/wiki_edits_train.jsonl"),
+                        help="mined training edits: their fixes check the model's other edits on T-1")
     parser.add_argument("--dev_clean", type=int, default=2000, help="clean development paragraphs")
     parser.add_argument("--dev_typed", type=int, default=1000, help="development paragraphs with typed noise")
     parser.add_argument("--damage_budget", type=float, default=0.0005,
@@ -385,14 +452,17 @@ def main():
     test_pairs = proposals(pool, error_items, error_predictions)
     raw_ece, ece_edits, _ = calibration_table(test_pairs)
     ece, _, ece_rows = calibration_table([(calibrate(prob, mappings["ocr"]), ok) for prob, ok in test_pairs])
+    t1 = None
+    if "T1_typed" in sets:
+        t1 = targeted(pool, sets["T1_typed"], outputs["T1_typed"], known_fixes(args.edits_train))
     pool.close()
-    gate_rows = gates(test, pages, ece if ece_edits else None, raw_ece)
+    gate_rows = gates(test, pages, ece if ece_edits else None, raw_ece, t1)
     examples = {name: harmful_examples(sets[name], outputs[name], 8)
                 for name in TEST_ERROR_SETS + ("T7_msa",) if name in sets}
 
     args.out.mkdir(parents=True, exist_ok=True)
     write_report(args.out / "report.md", args.model, threshold, reason, sets, scores, gate_rows, ece_rows,
-                 ece_edits, raw_ece, categories, examples, time.time() - started)
+                 ece_edits, raw_ece, categories, examples, time.time() - started, t1)
     (args.out / "calibration.json").write_text(json.dumps(
         {"method": "isotonic fit of edit confidence to accuracy on development data, per kind of input",
          "threshold": threshold,
@@ -401,7 +471,7 @@ def main():
     results = {"model": str(args.model), "threshold": threshold, "reason": reason, "gates": gate_rows,
                "pages_no_worse": pages, "ece": ece, "raw_ece": raw_ece, "calibration": ece_rows,
                "scores": {name: {str(t): s.summary() for t, s in by_t.items()} for name, by_t in scores.items()},
-               "t4_categories": {k: dict(v) for k, v in categories.by_category.items()}}
+               "t4_categories": {k: dict(v) for k, v in categories.by_category.items()}, "t1": t1}
     (args.out / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
     print("\n".join(f"{g['result']:>12s}  {g['gate']}: {g['measured']} (target {g['target']})" for g in gate_rows))
     print(f"report: {args.out / 'report.md'}")
