@@ -89,7 +89,7 @@ def build_result(text: str, normalized: Normalized, prediction: Prediction, thre
 class Corrector:
     """A trained correction model ready to correct text.
 
-    corrector = Corrector("artifacts/correct_v2/best_model")
+    corrector = Corrector("artifacts/correct/best_model")
     result = corrector.correct("ذهبت الي الجامعه", source="typed")  # or source="ocr"
     """
 

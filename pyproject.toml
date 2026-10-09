@@ -3,27 +3,21 @@ name = "araspellx"
 version = "0.1.0"
 description = "Character-level Arabic transformer for spelling and OCR error correction, trained from scratch"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "torch==2.3.0+cu121",
-    "torchvision==0.18.0+cu121",
-    "torchaudio==2.3.0+cu121",
-    "matplotlib==3.8.0",
-    "pandas==2.2.0",
-    "tensorboard==2.16.0",
-    "tqdm==4.66.0",
-    "numpy==1.26.4",
-    "setuptools<81",
-    "editdistance>=0.8.1",
     "transformers>=4.44,<5",
     "tokenizers>=0.22.2",
-    "onnx>=1.19.0",
-    "onnxruntime>=1.18,<1.24",
+    "numpy==1.26.4",
     "rapidfuzz>=3.14.5",
     "mwparserfromhell>=0.7.2",
-    "kaggle>=1.7.4.5",
-    "pytest>=9.1.1",
-    "ml-dtypes>=0.5",
+    "tqdm==4.66.0",
+    "tensorboard==2.16.0",
+    "setuptools<81",          # tensorboard 2.16 imports pkg_resources
+    "onnx>=1.19.0",           # ONNX export for the CPU speed benchmark
+    "onnxruntime>=1.18,<1.24",
+    "ml-dtypes>=0.5",         # required by onnx
 ]
 
 [[tool.uv.index]]
@@ -33,5 +27,3 @@ explicit = true
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu121" }]
-torchvision = [{ index = "pytorch-cu121" }]
-torchaudio = [{ index = "pytorch-cu121" }]

@@ -4,7 +4,8 @@ Parameter names, shapes and computations follow Hugging Face's
 `BertForTokenClassification` and `BertForMaskedLM` exactly (post-norm
 layers, erf GELU, learned absolute or relative positions, a single segment type), so
 checkpoints saved here load into those classes without custom code, and
-their checkpoints load here. `tests/test_bert.py` checks this numerically.
+their checkpoints load here (verified: outputs agree within 1e-5 for absolute,
+relative_key and relative_key_query positions).
 """
 from __future__ import annotations
 

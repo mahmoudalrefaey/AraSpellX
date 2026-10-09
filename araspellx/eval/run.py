@@ -7,7 +7,7 @@ sets among thresholds whose damage on clean development text stays within
 --damage_budget. Every frozen test set is then scored at that threshold and
 checked against the gates. Writes report.md and results.json to --out.
 
-    python -m araspellx.eval.run --model artifacts/correct/model --out artifacts/eval/correct
+    python -m araspellx.eval.run --model artifacts/correct/best_model --out artifacts/eval/correct
 """
 from __future__ import annotations
 
@@ -392,7 +392,7 @@ def write_report(path: Path, model: Path, threshold: float, reason: str, sets: D
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--model", type=Path, default=Path("artifacts/correct/model"))
+    parser.add_argument("--model", type=Path, default=Path("artifacts/correct/best_model"))
     parser.add_argument("--out", type=Path, default=Path("artifacts/eval/correct"))
     parser.add_argument("--text", type=Path, default=Path("data/v1/pretrain"))
     parser.add_argument("--testsets", type=Path, default=Path("data/v1/testsets"))

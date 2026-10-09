@@ -141,7 +141,7 @@ def show(corrector: Corrector, text: str, source: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--model", type=Path, default=Path("artifacts/correct_v2/best_model"))
+    parser.add_argument("--model", type=Path, default=Path("artifacts/correct/best_model"))
     parser.add_argument("--text", help="correct this text and exit")
     parser.add_argument("--cli", action="store_true", help="type texts in the terminal")
     parser.add_argument("--source", choices=["typed", "ocr"], default="typed")
