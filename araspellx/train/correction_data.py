@@ -7,7 +7,9 @@ renormalized over the sources that exist):
            includes dialect and diacritized text)
 - typed:   the same paragraphs with typed-error noise applied on the fly
 - ocr:     (OCR output, clean) pairs: rendered pages and real Yarmouk scans
-- edits:   real corrections mined from Wikipedia history (when available)
+- edits:   real corrections mined from Wikipedia history (when available);
+           only the corrected words are learned from, because an edit leaves
+           the paragraph's other mistakes in place
 
 Clean paragraphs come from the pretraining stream, which is already
 normalized, deduplicated and filtered against every test set. Pair files
@@ -23,7 +25,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from araspellx.data.labels import LabelVocab, derive_labels, count_labels
+from araspellx.data.labels import KEEP, LabelVocab, derive_labels, count_labels
 from araspellx.noise.typed import typed_noise
 from araspellx.text.charset import CLS, SEP, TOKEN_TO_ID, VOCAB
 from araspellx.text.normalize import normalize
@@ -88,16 +90,48 @@ class Mixture:
         return (typed_noise(clean, rng) if source == "typed" else clean), clean, source
 
 
-def window_example(noisy: str, clean: str, vocab: LabelVocab, rng: random.Random):
-    """Input ids and label ids of one window ([CLS] + up to 510 characters + [SEP])."""
+def fixed_words(text: str, char_labels: Sequence[str]) -> List[bool]:
+    """Characters of the words that a label changes (both neighbours of a changed space)."""
+    covered = [False] * len(text)
+    for i, label in enumerate(char_labels):
+        if label == KEEP:
+            continue
+        start, end = i, i + 1  # grow to the word around i (for a space: the words on both sides)
+        while start > 0 and not text[start - 1].isspace():
+            start -= 1
+        while end < len(text) and not text[end].isspace():
+            end += 1
+        covered[start:end] = [True] * (end - start)
+    return covered
+
+
+def window_example(noisy: str, clean: str, vocab: LabelVocab, rng: random.Random, partial: bool = False):
+    """Input ids and label ids of one window ([CLS] + up to 510 characters + [SEP]).
+
+    partial: `clean` fixes only some of the errors of `noisy` (a real edit leaves the
+    paragraph's other mistakes in place), so only the changed words are learned from;
+    every other character is ignored by the loss instead of being taught as correct.
+    """
     labels = derive_labels(noisy, clean)
-    start = rng.randrange(len(noisy) - CONTENT + 1) if len(noisy) > CONTENT else 0
+    covered = fixed_words(noisy, labels.chars) if partial else None
+    if len(noisy) <= CONTENT:
+        start = 0
+    elif partial and any(covered):  # make the window include a fixed word
+        anchor = rng.choice([i for i, c in enumerate(covered) if c])
+        start = min(max(anchor - rng.randrange(CONTENT), 0), len(noisy) - CONTENT)
+    else:
+        start = rng.randrange(len(noisy) - CONTENT + 1)
     chars = noisy[start:start + CONTENT]
     char_labels = labels.chars[start:start + CONTENT]
-    cls_label = labels.cls if start == 0 else "K"
+    cls_label = labels.cls if start == 0 else KEEP
     ids = [TOKEN_TO_ID[CLS]] + encode_chars(chars) + [TOKEN_TO_ID[SEP]]
-    label_ids = [vocab.encode(cls_label)] + [vocab.encode(l) for l in char_labels] + [-100]
-    return ids, label_ids
+    label_ids = [vocab.encode(l) for l in char_labels]
+    if partial:
+        label_ids = [l if c else -100 for l, c in zip(label_ids, covered[start:start + CONTENT])]
+        cls_id = vocab.encode(cls_label) if cls_label != KEEP else -100
+    else:
+        cls_id = vocab.encode(cls_label)
+    return ids, [cls_id] + label_ids + [-100]
 
 
 def build_vocab(mixture: Mixture, samples: int, seed: int = 0) -> LabelVocab:
@@ -112,7 +146,10 @@ def build_vocab(mixture: Mixture, samples: int, seed: int = 0) -> LabelVocab:
 def batch(mixture: Mixture, vocab: LabelVocab, size: int, rng: random.Random):
     import torch
 
-    rows = [window_example(*mixture.draw(rng)[:2], vocab, rng) for _ in range(size)]
+    rows = []
+    for _ in range(size):
+        noisy, clean, source = mixture.draw(rng)
+        rows.append(window_example(noisy, clean, vocab, rng, partial=source == "edits"))
     length = max(len(ids) for ids, _ in rows)
     inputs = torch.zeros(size, length, dtype=torch.long)
     labels = torch.full((size, length), -100, dtype=torch.long)

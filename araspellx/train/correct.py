@@ -44,7 +44,10 @@ from araspellx.train.progress import Prefetcher, Progress, gpu_memory_gb, precis
 from araspellx.train.stability import cap_attention, max_attention_scores
 
 DEV_SIZE = 300
-ERROR_SETS = ("typed", "ocr_render", "yarmouk_real", "wiki_edits")  # development sets with errors to fix
+# Development sets with errors to fix; their mean F0.5 picks the best model. wiki_edits is
+# reported but not used: a real edit fixes only some of a paragraph's errors, so fixing
+# the others would count as damage.
+ERROR_SETS = ("typed", "ocr_render", "yarmouk_real")
 
 
 def is_dev(pair_id_or_text: str) -> bool:
