@@ -45,21 +45,21 @@ AraSpellX
 fill="#cbd5e1"
 font-family="Arial,Helvetica,sans-serif"
 font-size="31">
-Arabic Spelling Correction
+Arabic spelling and OCR correction
 </text>
 
 <text x="112" y="345"
 fill="#94a3b8"
 font-family="Arial,Helvetica,sans-serif"
 font-size="22">
-A modern implementation inspired by the AraSpell research framework
+A character-level transformer, trained from scratch
 </text>
 
 <text x="112" y="410"
 fill="#7dd3fc"
 font-family="Arial,Helvetica,sans-serif"
 font-size="20">
-Seq2Seq • Transformer • Error Injection • Arabic NLP
+Edit labels • Calibrated confidence • Runs on CPU • Arabic NLP
 </text>
 
 <text x="1370" y="465"

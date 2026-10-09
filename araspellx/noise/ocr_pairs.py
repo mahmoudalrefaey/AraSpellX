@@ -28,7 +28,6 @@ from araspellx.text.normalize import normalize
 
 SOURCES = {"arwiki": 0.7, "arwikisource": 0.3}  # share of paragraphs per source
 MIN_CHARS, MAX_CHARS = 80, 600
-MAX_PAIR_CER = 0.5  # pages the OCR could not read at all teach nothing
 
 
 def sample_paragraphs(corpus: Path, count: int, banned: set, seed: int) -> List[Dict]:

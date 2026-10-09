@@ -1,8 +1,7 @@
 """Turn Wikimedia XML dumps into clean paragraphs of plain text.
 
-Unlike the AraSpell corpus (single sentences without punctuation or
-digits), paragraphs keep punctuation, numbers and Latin words, as real
-pipeline text does. Markup, templates, references, tables, files and
+Paragraphs keep punctuation, numbers and Latin words, as real pipeline
+text does. Markup, templates, references, tables, files and
 categories are removed; link text is kept.
 
     python -m araspellx.data.wikimedia data/raw/wikimedia/arywiki-20261001-pages-articles.xml.bz2 \

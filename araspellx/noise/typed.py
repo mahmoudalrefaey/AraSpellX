@@ -10,7 +10,7 @@ Two kinds of noise, both touching Arabic words only:
   rate drawn per text.
 
 Word ends are "not followed by an Arabic letter", so habits also apply
-before punctuation (المدرسة، -> المدرسه،), unlike the v0 rules.
+before punctuation (المدرسة، -> المدرسه،).
 """
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def add_typos(text: str, rng: random.Random, ratio: float) -> str:
 
 def typed_noise(text: str, rng: random.Random,
                 typo_ratios: Sequence[float] = (0.0, 0.1, 0.15, 0.15)) -> str:
-    """Habits plus typos at a per-text ratio (the v0 generator's tuned defaults)."""
+    """Habits plus typos, with the share of words given typos drawn per text."""
     return add_typos(apply_habits(text, rng), rng, rng.choice(typo_ratios))
 
 
