@@ -18,6 +18,7 @@ dependencies = [
     "onnx>=1.19.0",           # ONNX export for the CPU speed benchmark
     "onnxruntime>=1.18,<1.24",
     "ml-dtypes>=0.5",         # required by onnx
+    "streamlit>=1.65.0",
 ]
 
 [[tool.uv.index]]
