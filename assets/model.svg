@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600" role="img" aria-labelledby="title desc">
+<title id="title">Inside the AraSpellX model</title>
+<desc id="desc">Characters from a 210-token vocabulary are embedded in 384 dimensions and read by 8 post-norm BERT encoder layers with 6 heads. A masked-character head with 210 outputs is used in pretraining; the released model has an edit-label classifier with 178 outputs. Each encoder layer is multi-head self-attention with relative positions, add and LayerNorm, a 384-1536-384 GELU feed-forward network, and add and LayerNorm.</desc>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#0f172a"/>
+<stop offset=".6" stop-color="#1e1b4b"/>
+<stop offset="1" stop-color="#312e81"/>
+</linearGradient>
+<linearGradient id="encoder" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0" stop-color="#0c4a6e"/>
+<stop offset="1" stop-color="#4c1d95"/>
+</linearGradient>
+<linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0" stop-color="#38bdf8"/>
+<stop offset="1" stop-color="#a78bfa"/>
+</linearGradient>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+<path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
+</marker>
+</defs>
+<style>
+text { font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.eyebrow { font-size: 14px; font-weight: 700; letter-spacing: 2.5px; fill: #7dd3fc; }
+.title { font-size: 26px; font-weight: 700; fill: #f8fafc; }
+.section { font-size: 13px; font-weight: 700; letter-spacing: 2px; fill: #a5b4fc; }
+.name { font-size: 18px; font-weight: 700; fill: #f1f5f9; }
+.inner { font-size: 17px; font-weight: 700; fill: #f1f5f9; text-anchor: middle; }
+.cap { font-size: 13.5px; fill: #94a3b8; }
+.capc { font-size: 13.5px; fill: #94a3b8; text-anchor: middle; }
+.head { font-size: 15px; }
+.tag { font-size: 12.5px; text-anchor: end; }
+.note { font-size: 13.5px; fill: #cbd5e1; }
+.small { font-size: 12.5px; fill: #94a3b8; text-anchor: middle; }
+.foot { font-size: 14.5px; fill: #94a3b8; }
+.box { fill: #1e293b; stroke: #334155; stroke-width: 1.5; }
+.flow { fill: none; stroke: #64748b; stroke-width: 2; marker-end: url(#arrow); }
+.zoom { fill: none; stroke: #475569; stroke-width: 1.5; stroke-dasharray: 5 5; }
+</style>
+
+<rect width="1200" height="600" rx="24" fill="url(#bg)"/>
+
+<text class="eyebrow" x="48" y="54">INSIDE THE MODEL</text>
+<text class="title" x="48" y="88">A BERT encoder over characters, trained from scratch</text>
+
+<!-- the whole model -->
+<rect class="box" x="48" y="116" width="180" height="96" rx="14"/>
+<text class="name" x="68" y="152">Characters</text>
+<text class="cap" x="68" y="176">210-token vocabulary</text>
+<text class="cap" x="68" y="196">up to 512 per window</text>
+<path class="flow" d="M228 164 H254"/>
+
+<rect class="box" x="256" y="116" width="180" height="96" rx="14"/>
+<text class="name" x="276" y="152">Embeddings</text>
+<text class="cap" x="276" y="176">384 dimensions</text>
+<text class="cap" x="276" y="196">then LayerNorm</text>
+<path class="flow" d="M436 164 H462"/>
+
+<rect x="464" y="116" width="250" height="96" rx="14" fill="url(#encoder)" stroke="url(#edge)" stroke-width="2"/>
+<text class="name" x="484" y="152">8 encoder layers</text>
+<text class="cap" x="484" y="176" fill="#cbd5e1">6 heads, hidden size 384</text>
+<text class="cap" x="484" y="196" fill="#cbd5e1">post-norm, as in BERT</text>
+
+<path class="flow" d="M714 164 H728 C742 164 738 138 752 138" stroke-dasharray="5 4"/>
+<path class="flow" d="M714 164 H728 C742 164 738 190 752 190"/>
+<rect x="754" y="116" width="398" height="44" rx="12" fill="#1e1b4b" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text class="head" x="774" y="144" fill="#e9d5ff">Stage 1 · masked characters (210)</text>
+<text class="tag" x="1136" y="144" fill="#a78bfa">pretraining</text>
+<rect x="754" y="168" width="398" height="44" rx="12" fill="#052e2b" stroke="#10b981" stroke-width="2"/>
+<text class="head" x="774" y="196" fill="#d1fae5">Stage 2 · edit labels (178)</text>
+<text class="tag" x="1136" y="196" fill="#6ee7b7">released model</text>
+
+<!-- one encoder layer, enlarged -->
+<path class="zoom" d="M464 212 L48 252 M714 212 L1152 252"/>
+<rect x="48" y="252" width="1104" height="272" rx="18" fill="#0b1222" fill-opacity=".55" stroke="#475569" stroke-width="1.5" stroke-dasharray="5 5"/>
+<text class="section" x="72" y="284">ONE ENCODER LAYER</text>
+
+<path class="flow" d="M56 379 H74"/>
+<rect class="box" x="76" y="326" width="250" height="106" rx="14"/>
+<text class="inner" x="201" y="362">Multi-head self-attention</text>
+<text class="capc" x="201" y="388">6 heads × 64 dimensions</text>
+<text class="capc" x="201" y="410">relative positions</text>
+<path class="flow" d="M326 379 H350"/>
+
+<rect class="box" x="352" y="326" width="142" height="106" rx="14"/>
+<text class="inner" x="423" y="374">Add &amp;</text>
+<text class="inner" x="423" y="396">LayerNorm</text>
+<path class="flow" d="M494 379 H518"/>
+
+<rect class="box" x="520" y="326" width="220" height="106" rx="14"/>
+<text class="inner" x="630" y="362">Feed-forward</text>
+<text class="capc" x="630" y="388">384 → 1536 → 384</text>
+<text class="capc" x="630" y="410">GELU</text>
+<path class="flow" d="M740 379 H764"/>
+
+<rect class="box" x="766" y="326" width="142" height="106" rx="14"/>
+<text class="inner" x="837" y="374">Add &amp;</text>
+<text class="inner" x="837" y="396">LayerNorm</text>
+<path class="flow" d="M908 379 H938"/>
+
+<!-- residual connections -->
+<path class="flow" d="M64 379 V306 H423 V324"/>
+<path class="flow" d="M507 379 V306 H837 V324"/>
+<circle cx="64" cy="379" r="4" fill="#64748b"/>
+<circle cx="507" cy="379" r="4" fill="#64748b"/>
+
+<text class="note" x="76" y="472">Every query is also compared with a learned embedding of its distance to each key</text>
+<text class="note" x="76" y="494">(−511 to +511), in place of BERT's absolute position embeddings.</text>
+
+<!-- relative positions: one embedding per distance, the same along each diagonal -->
+<rect class="box" x="962" y="276" width="174" height="230" rx="14"/>
+<text x="1049" y="304" text-anchor="middle" font-size="14.5" font-weight="700" fill="#f1f5f9">Relative positions</text>
+<rect x="988" y="322" width="22" height="22" rx="4" fill="#f1f5f9"/>
+<rect x="1013" y="322" width="22" height="22" rx="4" fill="#a78bfa"/>
+<rect x="1038" y="322" width="22" height="22" rx="4" fill="#8b5cf6"/>
+<rect x="1063" y="322" width="22" height="22" rx="4" fill="#6d28d9"/>
+<rect x="1088" y="322" width="22" height="22" rx="4" fill="#4c1d95"/>
+<rect x="988" y="347" width="22" height="22" rx="4" fill="#0ea5e9"/>
+<rect x="1013" y="347" width="22" height="22" rx="4" fill="#f1f5f9"/>
+<rect x="1038" y="347" width="22" height="22" rx="4" fill="#a78bfa"/>
+<rect x="1063" y="347" width="22" height="22" rx="4" fill="#8b5cf6"/>
+<rect x="1088" y="347" width="22" height="22" rx="4" fill="#6d28d9"/>
+<rect x="988" y="372" width="22" height="22" rx="4" fill="#0369a1"/>
+<rect x="1013" y="372" width="22" height="22" rx="4" fill="#0ea5e9"/>
+<rect x="1038" y="372" width="22" height="22" rx="4" fill="#f1f5f9"/>
+<rect x="1063" y="372" width="22" height="22" rx="4" fill="#a78bfa"/>
+<rect x="1088" y="372" width="22" height="22" rx="4" fill="#8b5cf6"/>
+<rect x="988" y="397" width="22" height="22" rx="4" fill="#075985"/>
+<rect x="1013" y="397" width="22" height="22" rx="4" fill="#0369a1"/>
+<rect x="1038" y="397" width="22" height="22" rx="4" fill="#0ea5e9"/>
+<rect x="1063" y="397" width="22" height="22" rx="4" fill="#f1f5f9"/>
+<rect x="1088" y="397" width="22" height="22" rx="4" fill="#a78bfa"/>
+<rect x="988" y="422" width="22" height="22" rx="4" fill="#0c4a6e"/>
+<rect x="1013" y="422" width="22" height="22" rx="4" fill="#075985"/>
+<rect x="1038" y="422" width="22" height="22" rx="4" fill="#0369a1"/>
+<rect x="1063" y="422" width="22" height="22" rx="4" fill="#0ea5e9"/>
+<rect x="1088" y="422" width="22" height="22" rx="4" fill="#f1f5f9"/>
+<text class="small" x="1049" y="470">same diagonal, same</text>
+<text class="small" x="1049" y="488">distance embedding</text>
+
+<line x1="48" y1="548" x2="1152" y2="548" stroke="#334155" stroke-width="1"/>
+<text class="foot" x="48" y="576">15.1M parameters · saved as standard Hugging Face weights: BertForMaskedLM after stage 1, BertForTokenClassification after stage 2</text>
+</svg>

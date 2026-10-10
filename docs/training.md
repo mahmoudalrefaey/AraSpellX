@@ -2,15 +2,9 @@
 
 The model is trained from scratch in two stages: **pretraining** teaches a character encoder Arabic by restoring hidden characters, and **correction training** teaches it to predict an edit label for every character. Both need the datasets described in [data](data.md).
 
-```mermaid
-flowchart LR
-    W["Wikimedia text<br/>2.09B characters"] --> P["Stage 1: pretraining<br/>masked characters"]
-    P --> E["Pretrained encoder<br/>artifacts/pretrain/model"]
-    E --> C["Stage 2: correction<br/>edit labels"]
-    M["Training mixture:<br/>clean · typed noise ·<br/>OCR pairs · real edits"] --> C
-    C --> B["Correction model<br/>artifacts/correct/best_model"]
-    B --> V["Evaluation:<br/>threshold, calibration, gates"]
-```
+<p align="center">
+  <img src="../assets/training.svg" width="100%" alt="How the model was trained: stage 1 pretrains the encoder on 2.09 billion characters of Wikimedia text by restoring hidden characters (80,000 steps); stage 2 trains edit labels from the pretrained encoder (30,000 steps) on 35% clean text, 25% typed-error noise, 30% OCR pairs and 10% real edits; the evaluation then sets the threshold, calibrates the confidence and checks the release gates">
+</p>
 
 Both stages run on one GPU with bf16 (fp16 with loss scaling on GPUs without bf16, such as the T4). The current model was trained on an RTX 3060 Laptop GPU (6 GB): pretraining took about 8 hours and correction training about 4 hours.
 

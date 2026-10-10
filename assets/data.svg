@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="556" viewBox="0 0 1200 556" role="img" aria-labelledby="title desc">
+<title id="title">Where the AraSpellX data comes from</title>
+<desc id="desc">Five public sources. Wikimedia dumps give the pretraining stream, rendered OCR pairs and the T-7 clean test set. Arabic Wikipedia's edit history gives real-edit training pairs and the T-1 test set. The Yarmouk OCR dataset gives real-scan training pairs and the T-4 test set. NOD gives the T-5 test set, built but not run yet. The OpenITI gold standard gives the T-6 test set, for evaluation only.</desc>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#0f172a"/>
+<stop offset=".6" stop-color="#1e1b4b"/>
+<stop offset="1" stop-color="#312e81"/>
+</linearGradient>
+</defs>
+<style>
+text { font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.eyebrow { font-size: 14px; font-weight: 700; letter-spacing: 2.5px; fill: #7dd3fc; }
+.title { font-size: 26px; font-weight: 700; fill: #f8fafc; }
+.legend { font-size: 13.5px; fill: #cbd5e1; }
+.name { font-size: 16.5px; font-weight: 700; fill: #f1f5f9; }
+.cap { font-size: 13px; fill: #94a3b8; }
+.pill { font-size: 14px; text-anchor: middle; }
+.foot { font-size: 14px; fill: #94a3b8; }
+.box { fill: #1e293b; stroke: #334155; stroke-width: 1.5; }
+.bus { stroke: #475569; stroke-width: 2; }
+.train { fill: #2e1065; stroke: #a78bfa; stroke-width: 1.5; }
+.test { fill: #082f49; stroke: #38bdf8; stroke-width: 1.5; }
+.later { fill: #082f49; stroke: #38bdf8; stroke-width: 1.5; stroke-dasharray: 5 4; }
+.t-train { fill: #ede9fe; }
+.t-test { fill: #e0f2fe; }
+</style>
+
+<rect width="1200" height="556" rx="24" fill="url(#bg)"/>
+
+<text class="eyebrow" x="48" y="54">WHERE THE DATA COMES FROM</text>
+<text class="title" x="48" y="88">Public sources, with the test text held out</text>
+<rect class="train" x="760" y="74" width="26" height="14" rx="7"/><text class="legend" x="794" y="86">training data</text>
+<rect class="test" x="900" y="74" width="26" height="14" rx="7"/><text class="legend" x="934" y="86">test set</text>
+<rect class="later" x="1006" y="74" width="26" height="14" rx="7"/><text class="legend" x="1040" y="86">not run yet</text>
+
+<!-- one row per source: the bus runs behind the datasets built from it -->
+<g class="bus">
+<line x1="440" y1="156" x2="848" y2="156"/>
+<line x1="440" y1="230" x2="711" y2="230"/>
+<line x1="440" y1="304" x2="711" y2="304"/>
+<line x1="440" y1="378" x2="488" y2="378"/>
+<line x1="440" y1="452" x2="488" y2="452"/>
+</g>
+
+<rect class="box" x="48" y="127" width="392" height="58" rx="12"/>
+<text class="name" x="68" y="151">Wikimedia dumps</text>
+<text class="cap" x="68" y="172">Wikipedia (Arabic, Egyptian, Moroccan), Wikisource</text>
+<rect class="train" x="488" y="138" width="166" height="36" rx="18"/><text class="pill t-train" x="571" y="161">Pretraining stream</text>
+<rect class="train" x="668" y="138" width="166" height="36" rx="18"/><text class="pill t-train" x="751" y="161">Rendered OCR pairs</text>
+<rect class="test" x="848" y="138" width="137" height="36" rx="18"/><text class="pill t-test" x="916.5" y="161">T-7 clean text</text>
+
+<rect class="box" x="48" y="201" width="392" height="58" rx="12"/>
+<text class="name" x="68" y="225">Arabic Wikipedia edit history</text>
+<text class="cap" x="68" y="246">consecutive revisions of every article</text>
+<rect class="train" x="488" y="212" width="209" height="36" rx="18"/><text class="pill t-train" x="592.5" y="235">Real-edit training pairs</text>
+<rect class="test" x="711" y="212" width="187" height="36" rx="18"/><text class="pill t-test" x="804.5" y="235">T-1 real typed errors</text>
+
+<rect class="box" x="48" y="275" width="392" height="58" rx="12"/>
+<text class="name" x="68" y="299">Yarmouk Arabic OCR Dataset</text>
+<text class="cap" x="68" y="320">4,587 articles printed and scanned at 300 dpi</text>
+<rect class="train" x="488" y="286" width="209" height="36" rx="18"/><text class="pill t-train" x="592.5" y="309">Real-scan training pairs</text>
+<rect class="test" x="711" y="286" width="137" height="36" rx="18"/><text class="pill t-test" x="779.5" y="309">T-4 real scans</text>
+
+<rect class="box" x="48" y="349" width="392" height="58" rx="12"/>
+<text class="name" x="68" y="373">NOD, Noisy OCR Dataset</text>
+<text class="cap" x="68" y="394">100 Yarmouk pages in many noise versions</text>
+<rect class="later" x="488" y="360" width="166" height="36" rx="18"/><text class="pill t-test" x="571" y="383">T-5 degraded scans</text>
+
+<rect class="box" x="48" y="423" width="392" height="58" rx="12"/>
+<text class="name" x="68" y="447">OpenITI OCR gold standard</text>
+<text class="cap" x="68" y="468">lines of seven classical books</text>
+<rect class="test" x="488" y="434" width="288" height="36" rx="18"/><text class="pill t-test" x="632" y="457">T-6 classical OCR (evaluation only)</text>
+
+<g fill="#64748b">
+<circle cx="440" cy="156" r="4"/><circle cx="440" cy="230" r="4"/><circle cx="440" cy="304" r="4"/><circle cx="440" cy="378" r="4"/><circle cx="440" cy="452" r="4"/>
+</g>
+
+<line x1="48" y1="502" x2="1152" y2="502" stroke="#334155" stroke-width="1"/>
+<text class="foot" x="48" y="530">Wiki pages are split by a hash of their id, and training paragraphs that share an 8-word passage with any test text are dropped.</text>
+</svg>

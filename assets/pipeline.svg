@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+<title id="title">How AraSpellX corrects a text</title>
+<desc id="desc">The text ذهبت الي الجامعه is read as 16 characters. The encoder predicts an edit label for every character: K (keep) for most of them, R:إ and R:ى on الي and R:ة on الجامعه. The edits that reach the 0.9 threshold give ذهبت إلى الجامعة, with confidences of 92% and 99%.</desc>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#0f172a"/>
+<stop offset=".6" stop-color="#1e1b4b"/>
+<stop offset="1" stop-color="#312e81"/>
+</linearGradient>
+<linearGradient id="encoder" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0" stop-color="#0c4a6e"/>
+<stop offset="1" stop-color="#4c1d95"/>
+</linearGradient>
+<linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0" stop-color="#38bdf8"/>
+<stop offset="1" stop-color="#a78bfa"/>
+</linearGradient>
+</defs>
+<style>
+text { font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.eyebrow { font-size: 14px; font-weight: 700; letter-spacing: 2.5px; fill: #7dd3fc; }
+.title { font-size: 26px; font-weight: 700; fill: #f8fafc; }
+.legend { font-size: 13.5px; fill: #cbd5e1; }
+.badge { fill: #1e293b; stroke: #38bdf8; stroke-width: 1.5; }
+.num { font-size: 13px; font-weight: 700; fill: #7dd3fc; text-anchor: middle; }
+.stage { font-size: 18px; font-weight: 700; fill: #f1f5f9; }
+.cap { font-size: 13.5px; fill: #94a3b8; }
+.word { font-size: 30px; fill: #e2e8f0; text-anchor: middle; }
+.err { fill: #fda4af; }
+.fix { fill: #6ee7b7; }
+.char { font-size: 26px; fill: #e2e8f0; text-anchor: middle; }
+.keep { font-size: 16px; fill: #64748b; text-anchor: middle; }
+.edit { font-size: 17px; font-weight: 700; fill: #6ee7b7; text-anchor: middle; }
+.prob { font-size: 12.5px; fill: #a7f3d0; text-anchor: middle; }
+.note { font-size: 14px; fill: #94a3b8; text-anchor: middle; }
+.enc { font-size: 18px; fill: #e0f2fe; text-anchor: middle; }
+.foot { font-size: 14.5px; fill: #94a3b8; }
+.cell { fill: #1e293b; stroke: #334155; stroke-width: 1.5; }
+.cell-err { fill: #1e293b; stroke: #fb7185; stroke-width: 2; }
+.cell-edit { fill: #064e3b; stroke: #10b981; stroke-width: 2; }
+.wire { stroke: #475569; stroke-width: 1.5; }
+.space { fill: none; stroke: #64748b; stroke-width: 2; }
+.br { fill: none; stroke: #64748b; stroke-width: 2; }
+.br-err { fill: none; stroke: #fb7185; stroke-width: 2; }
+.br-fix { fill: none; stroke: #34d399; stroke-width: 2; }
+</style>
+
+<rect width="1200" height="620" rx="24" fill="url(#bg)"/>
+
+<text class="eyebrow" x="48" y="54">HOW A TEXT IS CORRECTED</text>
+<text class="title" x="48" y="88">Characters in, edits out</text>
+<rect class="cell-err" x="872" y="74" width="14" height="14" rx="3"/>
+<text class="legend" x="894" y="86">spelling error</text>
+<rect class="cell-edit" x="1012" y="74" width="14" height="14" rx="3"/>
+<text class="legend" x="1034" y="86">applied edit</text>
+
+<!-- stages; the example reads right to left, one column per character -->
+<circle class="badge" cx="60" cy="155" r="13"/><text class="num" x="60" y="160">1</text>
+<text class="stage" x="84" y="161">Input</text>
+<text class="cap" x="84" y="182">typed or OCR text</text>
+
+<circle class="badge" cx="60" cy="231" r="13"/><text class="num" x="60" y="236">2</text>
+<text class="stage" x="84" y="237">Characters</text>
+<text class="cap" x="84" y="258">normalized, one token each</text>
+
+<circle class="badge" cx="60" cy="316" r="13"/><text class="num" x="60" y="321">3</text>
+<text class="stage" x="84" y="322">Encoder</text>
+<text class="cap" x="84" y="343">15.1M parameters</text>
+
+<circle class="badge" cx="60" cy="404" r="13"/><text class="num" x="60" y="409">4</text>
+<text class="stage" x="84" y="410">Edit labels</text>
+<text class="cap" x="84" y="431">one per character</text>
+
+<circle class="badge" cx="60" cy="478" r="13"/><text class="num" x="60" y="483">5</text>
+<text class="stage" x="84" y="484">Output</text>
+<text class="cap" x="84" y="505">edits ≥ 0.9 applied</text>
+
+<!-- 1. input words over their characters -->
+<text class="word" x="1055" y="172">ذهبت</text>
+<text class="word err" x="812" y="172">الي</text>
+<text class="word err" x="488" y="172">الجامعه</text>
+<path class="br" d="M954 202 v-6 h202 v6"/>
+<path class="br-err" d="M738 202 v-6 h148 v6"/>
+<path class="br-err" d="M306 202 v-6 h364 v6"/>
+
+<!-- 2. characters -->
+<rect class="cell" x="1112" y="212" width="48" height="50" rx="10"/><text class="char" x="1136" y="246">ذ</text>
+<rect class="cell" x="1058" y="212" width="48" height="50" rx="10"/><text class="char" x="1082" y="246">ه</text>
+<rect class="cell" x="1004" y="212" width="48" height="50" rx="10"/><text class="char" x="1028" y="246">ب</text>
+<rect class="cell" x="950" y="212" width="48" height="50" rx="10"/><text class="char" x="974" y="246">ت</text>
+<rect class="cell" x="896" y="212" width="48" height="50" rx="10"/><path class="space" d="M911 238 v7 h18 v-7"/>
+<rect class="cell-err" x="842" y="212" width="48" height="50" rx="10"/><text class="char" x="866" y="246">ا</text>
+<rect class="cell" x="788" y="212" width="48" height="50" rx="10"/><text class="char" x="812" y="246">ل</text>
+<rect class="cell-err" x="734" y="212" width="48" height="50" rx="10"/><text class="char" x="758" y="246">ي</text>
+<rect class="cell" x="680" y="212" width="48" height="50" rx="10"/><path class="space" d="M695 238 v7 h18 v-7"/>
+<rect class="cell" x="626" y="212" width="48" height="50" rx="10"/><text class="char" x="650" y="246">ا</text>
+<rect class="cell" x="572" y="212" width="48" height="50" rx="10"/><text class="char" x="596" y="246">ل</text>
+<rect class="cell" x="518" y="212" width="48" height="50" rx="10"/><text class="char" x="542" y="246">ج</text>
+<rect class="cell" x="464" y="212" width="48" height="50" rx="10"/><text class="char" x="488" y="246">ا</text>
+<rect class="cell" x="410" y="212" width="48" height="50" rx="10"/><text class="char" x="434" y="246">م</text>
+<rect class="cell" x="356" y="212" width="48" height="50" rx="10"/><text class="char" x="380" y="246">ع</text>
+<rect class="cell-err" x="302" y="212" width="48" height="50" rx="10"/><text class="char" x="326" y="246">ه</text>
+
+<!-- 3. the encoder reads the whole window at once -->
+<g class="wire">
+<path d="M1136 262 v30 M1082 262 v30 M1028 262 v30 M974 262 v30 M920 262 v30 M866 262 v30 M812 262 v30 M758 262 v30 M704 262 v30 M650 262 v30 M596 262 v30 M542 262 v30 M488 262 v30 M434 262 v30 M380 262 v30 M326 262 v30"/>
+<path d="M1136 352 v30 M1082 352 v30 M1028 352 v30 M974 352 v30 M920 352 v30 M866 352 v30 M812 352 v30 M758 352 v30 M704 352 v30 M650 352 v30 M596 352 v30 M542 352 v30 M488 352 v30 M434 352 v30 M380 352 v30 M326 352 v30"/>
+</g>
+<rect x="302" y="292" width="858" height="60" rx="14" fill="url(#encoder)" stroke="url(#edge)" stroke-width="2"/>
+<text class="enc" x="731" y="328"><tspan font-weight="700">Character encoder</tspan> · 8 layers × 384 · 6 heads · relative positions</text>
+
+<!-- 4. one edit label per character, with its probability -->
+<rect class="cell" x="1112" y="382" width="48" height="56" rx="10"/><text class="keep" x="1136" y="416">K</text>
+<rect class="cell" x="1058" y="382" width="48" height="56" rx="10"/><text class="keep" x="1082" y="416">K</text>
+<rect class="cell" x="1004" y="382" width="48" height="56" rx="10"/><text class="keep" x="1028" y="416">K</text>
+<rect class="cell" x="950" y="382" width="48" height="56" rx="10"/><text class="keep" x="974" y="416">K</text>
+<rect class="cell" x="896" y="382" width="48" height="56" rx="10"/><text class="keep" x="920" y="416">K</text>
+<rect class="cell-edit" x="842" y="382" width="48" height="56" rx="10"/><text class="edit" x="866" y="408">R:إ</text><text class="prob" x="866" y="428">0.96</text>
+<rect class="cell" x="788" y="382" width="48" height="56" rx="10"/><text class="keep" x="812" y="416">K</text>
+<rect class="cell-edit" x="734" y="382" width="48" height="56" rx="10"/><text class="edit" x="758" y="408">R:ى</text><text class="prob" x="758" y="428">0.95</text>
+<rect class="cell" x="680" y="382" width="48" height="56" rx="10"/><text class="keep" x="704" y="416">K</text>
+<rect class="cell" x="626" y="382" width="48" height="56" rx="10"/><text class="keep" x="650" y="416">K</text>
+<rect class="cell" x="572" y="382" width="48" height="56" rx="10"/><text class="keep" x="596" y="416">K</text>
+<rect class="cell" x="518" y="382" width="48" height="56" rx="10"/><text class="keep" x="542" y="416">K</text>
+<rect class="cell" x="464" y="382" width="48" height="56" rx="10"/><text class="keep" x="488" y="416">K</text>
+<rect class="cell" x="410" y="382" width="48" height="56" rx="10"/><text class="keep" x="434" y="416">K</text>
+<rect class="cell" x="356" y="382" width="48" height="56" rx="10"/><text class="keep" x="380" y="416">K</text>
+<rect class="cell-edit" x="302" y="382" width="48" height="56" rx="10"/><text class="edit" x="326" y="408">R:ة</text><text class="prob" x="326" y="428">0.99</text>
+
+<!-- 5. output words and their corrections -->
+<path class="br" d="M954 446 v6 h202 v-6"/>
+<path class="br-fix" d="M738 446 v6 h148 v-6"/>
+<path class="br-fix" d="M306 446 v6 h364 v-6"/>
+<text class="word" x="1055" y="488">ذهبت</text>
+<text class="word fix" x="812" y="488">إلى</text>
+<text class="word fix" x="488" y="488">الجامعة</text>
+<text class="note" x="812" y="514">92% · mixed</text>
+<text class="note" x="488" y="514">99% · ta_marbuta</text>
+
+<line x1="48" y1="540" x2="1152" y2="540" stroke="#334155" stroke-width="1"/>
+<text class="foot" x="48" y="568">Labels: K keep · D delete · R:x replace with x · +s insert s after the character</text>
+<text class="foot" x="48" y="592">A correction's confidence is the lowest probability among its edits, calibrated for typed or OCR input.</text>
+</svg>

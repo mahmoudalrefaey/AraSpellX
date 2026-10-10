@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="506" viewBox="0 0 1200 506" role="img" aria-labelledby="title desc">
+<title id="title">How AraSpellX was trained</title>
+<desc id="desc">Stage 1 pretrains the encoder on 2.09 billion characters of Wikimedia text by restoring hidden characters (80,000 steps). Stage 2 trains edit labels from the pretrained encoder (30,000 steps) on a mixture of 35% clean text, 25% typed-error noise, 30% OCR pairs and 10% real edits. The evaluation then chooses the threshold, calibrates the confidence and checks the release gates; the model is published on Hugging Face with a Streamlit demo.</desc>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#0f172a"/>
+<stop offset=".6" stop-color="#1e1b4b"/>
+<stop offset="1" stop-color="#312e81"/>
+</linearGradient>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+<path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
+</marker>
+<clipPath id="bar"><rect x="72" y="368" width="802" height="30" rx="8"/></clipPath>
+</defs>
+<style>
+text { font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.eyebrow { font-size: 14px; font-weight: 700; letter-spacing: 2.5px; fill: #7dd3fc; }
+.title { font-size: 26px; font-weight: 700; fill: #f8fafc; }
+.label { font-size: 12.5px; font-weight: 700; letter-spacing: 2px; }
+.name { font-size: 18px; font-weight: 700; fill: #f1f5f9; }
+.key { font-size: 14px; font-weight: 700; fill: #e2e8f0; }
+.cap { font-size: 13.5px; fill: #94a3b8; }
+.seg { font-size: 13.5px; font-weight: 600; fill: #f8fafc; }
+.item { font-size: 15px; fill: #f1f5f9; }
+.foot { font-size: 14.5px; fill: #94a3b8; }
+.box { fill: #1e293b; stroke: #334155; stroke-width: 1.5; }
+.flow { fill: none; stroke: #64748b; stroke-width: 2; marker-end: url(#arrow); }
+</style>
+
+<rect width="1200" height="506" rx="24" fill="url(#bg)"/>
+
+<text class="eyebrow" x="48" y="54">HOW IT WAS TRAINED</text>
+<text class="title" x="48" y="88">Two stages, from random weights</text>
+
+<rect class="box" x="48" y="116" width="230" height="180" rx="14"/>
+<text class="label" x="68" y="146" fill="#7dd3fc">DATA</text>
+<text class="name" x="68" y="172">Wikimedia text</text>
+<text class="key" x="68" y="198">2.09B characters</text>
+<text class="cap" x="68" y="220">Arabic, Egyptian and</text>
+<text class="cap" x="68" y="240">Moroccan Wikipedia,</text>
+<text class="cap" x="68" y="260">Arabic Wikisource</text>
+<path class="flow" d="M278 206 H306"/>
+
+<rect x="308" y="116" width="280" height="180" rx="14" fill="#1e1b4b" stroke="#a78bfa" stroke-width="1.5"/>
+<text class="label" x="328" y="146" fill="#c4b5fd">STAGE 1</text>
+<text class="name" x="328" y="172">Pretraining</text>
+<text class="cap" x="328" y="198">restore 15% hidden characters</text>
+<text class="cap" x="328" y="218">(whole words, 1–5 character spans)</text>
+<text class="key" x="328" y="244">80,000 steps × 16,384 characters</text>
+<text class="cap" x="328" y="266">about 8 h, RTX 3060 Laptop GPU</text>
+<path class="flow" d="M588 206 H616"/>
+
+<rect x="618" y="116" width="280" height="180" rx="14" fill="#052e2b" stroke="#10b981" stroke-width="1.5"/>
+<text class="label" x="638" y="146" fill="#6ee7b7">STAGE 2</text>
+<text class="name" x="638" y="172">Correction training</text>
+<text class="cap" x="638" y="198">starts from the stage 1 encoder</text>
+<text class="cap" x="638" y="218">an edit label for every character</text>
+<text class="key" x="638" y="244">30,000 steps × 32 windows</text>
+<text class="cap" x="638" y="266">about 4 h on the same GPU</text>
+<path class="flow" d="M898 206 H926"/>
+
+<rect class="box" x="928" y="116" width="224" height="180" rx="14"/>
+<text class="label" x="948" y="146" fill="#fbbf24">THEN</text>
+<text class="name" x="948" y="172">Evaluation</text>
+<text class="cap" x="948" y="198">threshold 0.9, chosen on</text>
+<text class="cap" x="948" y="218">development data</text>
+<text class="cap" x="948" y="244">confidence calibration</text>
+<text class="cap" x="948" y="266">release gates</text>
+<path class="flow" d="M1040 296 V324"/>
+
+<!-- the stage 2 mixture, to scale -->
+<rect class="box" x="48" y="326" width="850" height="114" rx="14"/>
+<path class="flow" d="M758 326 V298"/>
+<text class="name" x="72" y="354" font-size="15">Stage 2 training mixture</text>
+<g clip-path="url(#bar)">
+<rect x="72" y="368" width="281" height="30" fill="#334155"/>
+<rect x="353" y="368" width="200" height="30" fill="#0369a1"/>
+<rect x="553" y="368" width="241" height="30" fill="#6d28d9"/>
+<rect x="794" y="368" width="80" height="30" fill="#047857"/>
+</g>
+<text class="seg" x="84" y="388">clean text 35%</text>
+<text class="seg" x="365" y="388">typed-error noise 25%</text>
+<text class="seg" x="565" y="388">OCR pairs 30%</text>
+<text class="seg" x="804" y="388">edits 10%</text>
+<text class="cap" x="72" y="424">Clean text includes dialect and diacritized text; real edits are learned only on the words the editor changed.</text>
+
+<rect class="box" x="928" y="326" width="224" height="114" rx="14"/>
+<text class="label" x="948" y="354" fill="#7dd3fc">PUBLISHED</text>
+<text class="item" x="948" y="384">Hugging Face model</text>
+<text class="item" x="948" y="410">Streamlit live demo</text>
+
+<line x1="48" y1="462" x2="1152" y2="462" stroke="#334155" stroke-width="1"/>
+<text class="foot" x="48" y="488">Both stages save a checkpoint every 20 minutes, keep the best model, stop by themselves if it gets worse, and cap attention scores.</text>
+</svg>

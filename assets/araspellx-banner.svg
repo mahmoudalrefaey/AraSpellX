@@ -61,11 +61,4 @@ font-family="Arial,Helvetica,sans-serif"
 font-size="20">
 Edit labels • Calibrated confidence • Runs on CPU • Arabic NLP
 </text>
-
-<text x="1370" y="465"
-text-anchor="middle"
-fill="#c4b5fd"
-font-family="Arial,Helvetica,sans-serif"
-font-size="24">
-</text>
 </svg>

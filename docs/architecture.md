@@ -2,26 +2,23 @@
 
 AraSpellX corrects a text in one pass of a small encoder over its characters. For every character the model predicts an **edit label**: keep it, delete it, replace it, or insert something after it. Applying the confident labels gives the corrected text; grouping them per word gives the list of corrections.
 
-```mermaid
-flowchart LR
-    A["Input text"] --> B["Normalize<br/>(keeps a map to the input)"]
-    B --> C["Characters → token ids<br/>512-token windows"]
-    C --> D["BERT encoder<br/>8 layers × 384"]
-    D --> E["Edit label + probability<br/>for every character"]
-    E --> F["Allowed edits above<br/>the threshold"]
-    F --> G["Corrected text"]
-    F --> H["Corrections: span, original,<br/>replacement, confidence, category"]
-```
+<p align="center">
+  <img src="../assets/pipeline.svg" width="100%" alt="How a text is corrected: the input ذهبت الي الجامعه is split into characters, the encoder gives every character an edit label (K for keep on most, R:إ and R:ى on الي, R:ة on الجامعه), and the edits that reach 0.9 give ذهبت إلى الجامعة with confidences of 92% and 99%">
+</p>
 
 ## Text processing
 
 - **Character set** (`araspellx/text/charset.py`): 210 tokens. Arabic letters (including alef wasla and Persian and Urdu letters used in foreign names), diacritics, tatweel, Arabic and ASCII punctuation, three digit systems, Latin letters, symbols, whitespace and five special tokens (`[PAD] [UNK] [CLS] [SEP] [MASK]`). Anything else is `[UNK]`.
-- **Normalization** (`araspellx/text/normalize.py`): folds look-alike code points (ی → ي, ک → ك, ہ/ھ/ە → ه, ۃ → ة), expands presentation-form ligatures, composes letters stored as a base letter plus a combining hamza or madda (ا + ٔ → أ), and removes tatweel and invisible characters. Diacritics are kept. Every normalized character remembers the span of the input it came from, so corrections map back to the caller's text exactly.
+- **Normalization** (`araspellx/text/normalize.py`): folds look-alike code points (ی becomes ي and ک becomes ك, while ہ, ھ and ە become ه and ۃ becomes ة), expands presentation-form ligatures, composes letters stored as a base letter plus a combining hamza or madda (alef followed by a combining hamza above becomes أ), and removes tatweel and invisible characters. Diacritics are kept. Every normalized character remembers the span of the input it came from, so corrections map back to the caller's text exactly.
 - **Tokenizer** (`araspellx/text/tokenizer.py`): one token per character, as a standard `PreTrainedTokenizerFast`.
 
 ## The model
 
 AraSpellX uses its own implementation of the BERT encoder (`araspellx/model/bert.py`). Parameter names, shapes and computations follow Hugging Face's `BertForMaskedLM` and `BertForTokenClassification` (post-norm layers, GELU), so the saved weights load in plain `transformers`; outputs agree with Hugging Face's classes within 1e-5. The same encoder is trained twice: as a masked-character model (pretraining) and then with a label classifier on top (correction, see [training](training.md)).
+
+<p align="center">
+  <img src="../assets/model.svg" width="100%" alt="Inside the model: characters from a 210-token vocabulary, 384-dimensional embeddings and 8 post-norm BERT encoder layers with 6 heads, followed by a masked-character head in pretraining and an edit-label classifier with 178 outputs in the released model; each encoder layer is multi-head self-attention with relative positions, add and LayerNorm, a 384-1536-384 GELU feed-forward network, and add and LayerNorm">
+</p>
 
 | | |
 |---|---|
@@ -49,12 +46,12 @@ Rows with absolute positions were measured when the size was chosen (exported fr
 
 Each input character gets one label (`araspellx/data/labels.py`):
 
-| Label | Meaning | Example |
-|---|---|---|
-| `K` | keep | |
-| `D` | delete | الججامعة → الجامعة |
-| `R:x` | replace with x | الجامعه → الجامعة (`R:ة` on ه) |
-| `…+s` | then insert s after it | المعلوماتالمطلوبة → المعلومات المطلوبة (`K+ ` on ت) |
+| Label | Meaning | Before | After | Label used |
+|---|---|---|---|---|
+| `K` | keep | | | |
+| `D` | delete | الججامعة | الجامعة | `D` on the extra ج |
+| `R:x` | replace with x | الجامعه | الجامعة | `R:ة` on ه |
+| `…+s` | then insert s after it | المعلوماتالمطلوبة | المعلومات المطلوبة | `K+ ` on ت |
 
 The `[CLS]` token carries insertions before the first character. Labels are derived by aligning noisy and clean text character by character; the label set is the most frequent edits that cover 99.5% of the training edits (178 for the current model). Edit labels rather than generating the corrected text means one pass instead of one decoder step per character, correct text kept by default, and native positions and confidences.
 

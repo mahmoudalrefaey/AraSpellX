@@ -2,25 +2,9 @@
 
 Everything AraSpellX trains and is tested on comes from public sources. This guide lists the sources and their licenses, the held-out split that keeps test text out of training, and the commands that rebuild every dataset. Downloaded and generated data live in `data/`, which is not tracked by Git.
 
-```mermaid
-flowchart LR
-    subgraph Sources
-        WD["Wikimedia dumps"]
-        WH["Wikipedia edit history"]
-        Y["Yarmouk scans"]
-        N["NOD degraded scans"]
-        O["OpenITI gold standard"]
-    end
-    WD --> CO["Paragraph corpus"] --> PT["Pretraining stream"]
-    CO --> RO["Rendered OCR pairs"]
-    CO --> T7["T-7 clean text"]
-    WH --> T1["T-1 real typed errors"]
-    WH --> ED["Real-edit training pairs"]
-    Y --> T4["T-4 real scans"]
-    Y --> YP["Real-scan training pairs"]
-    N --> T5["T-5 (builder ready)"]
-    O --> T6["T-6 classical OCR"]
-```
+<p align="center">
+  <img src="../assets/data.svg" width="100%" alt="Where the data comes from: Wikimedia dumps give the pretraining stream, rendered OCR pairs and the T-7 clean test set; Arabic Wikipedia's edit history gives real-edit training pairs and T-1; the Yarmouk OCR dataset gives real-scan training pairs and T-4; NOD gives T-5, not run yet; the OpenITI gold standard gives T-6, for evaluation only">
+</p>
 
 ## Sources and licenses
 
@@ -99,7 +83,7 @@ container araspellx.noise.ocr_pairs --count 100000
 ## Training text in detail
 
 - **Clean text**, unchanged: paragraphs from the pretraining stream, including dialect and diacritized text, teach the model to leave correct text alone.
-- **Typed-error noise** (`araspellx/noise/typed.py`), generated on the fly: spelling habits measured in real text (dropped hamza on alef, ة/ه, ى/ي, hamza seats, ظ/ض, dropped alef after waw) and keyboard typos inside words (insert, delete, swap, neighbouring key), merged and split words. Only Arabic words are touched.
+- **Typed-error noise** (`araspellx/noise/typed.py`), generated on the fly: spelling habits measured in real text (dropped hamza on alef, confusing ة with ه and ى with ي, hamza seats, confusing ظ with ض, dropped alef after waw) and keyboard typos inside words (insert, delete, swap, neighbouring key), merged and split words. Only Arabic words are touched.
 - **Rendered OCR** (`araspellx/noise/ocr_pairs.py`): paragraphs of 80–600 characters (70% Wikipedia, 30% Wikisource) rendered at 300 dpi in five open Arabic fonts at 10–16 points, given a random mix of scan defects (`araspellx/ocr/degrade.py`: thin or heavy ink, slight skew, low resolution, blur, uneven background, sensor noise, binarization, JPEG compression) and read back by Tesseract. Each pair stores its character error rate; 8.4% of the pairs come from pages the engine could hardly read (above 50%) and are currently kept.
 - **Real OCR**: Yarmouk's training articles, read by Tesseract in the container and by ABBYY (the dataset's own output), aligned to the ground truth paragraph by paragraph.
 - **Real edits** (`araspellx/testsets/edits.py`): consecutive revisions of every Arabic Wikipedia article are compared. A paragraph becomes a pair when the only differences are 1–5 spelling fixes of at most two characters on Arabic words (merges and splits included). Edits that only add or remove a prefix (ال, و, ف, ب, ك, ل) are grammar, not spelling, and are dropped; so are fixes a later revision undid, and one fix may repeat only a few times so that a bot's rule does not dominate. Each pair records the fixes of one edit only; the paragraph may contain other errors.

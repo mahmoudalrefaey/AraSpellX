@@ -88,6 +88,6 @@ Model `artifacts/correct/best_model` (correction step 28,000), threshold 0.9:
 | T-6, OpenITI OCR | 0.490 | 0.024 | 20.9% | 0.04% | 47.4% → 46.2% |
 | Benchmark | 1.000 | 0.900 | 0.0% | 0.00% | 38.4% → 3.8% |
 
-On T-1 the model fixed 706 of the 8,604 words the editors fixed, and 706 of the 734 of these words it changed match the editor. It made 3.4 other edits per 1,000 words, 76% of which are fixes that editors made on other pages (اللغه → اللغة, ايضا → أيضا).
+On T-1 the model fixed 706 of the 8,604 words the editors fixed, and 706 of the 734 of these words it changed match the editor. It made 3.4 other edits per 1,000 words, 76% of which are fixes that editors made on other pages (such as اللغه to اللغة and ايضا to أيضا).
 
 **In short.** Typed spelling errors are corrected precisely, and correct, dialect and diacritized text is left alone. On real scans the model rarely makes a page worse, but it fixes too little: most OCR errors are badly garbled words (79% of the errors in T-4), and it fixes about 1 in 10 of them. Lowering the threshold does not help: on the development scans it adds fixes slowly while harmful edits rise quickly.
