@@ -46,6 +46,7 @@ APP_STYLE = """<style>
 PAGE_STYLE = """
  :host { all: initial; display: block; }
  .page { font-family: "Segoe UI", Tahoma, sans-serif; max-width: 920px; margin: 2em auto; padding: 0 1em; color: #222; }
+ textarea, input, button { font-family: inherit; }  /* browsers give form fields a monospace font of their own */
  h1 { margin-bottom: 0.2em; } .sub { color: #666; margin-top: 0; }
  textarea { width: 100%; height: 9em; font-size: 1.25em; padding: 0.6em; box-sizing: border-box; }
  .row { display: flex; gap: 1.5em; align-items: center; flex-wrap: wrap; margin: 0.8em 0; }
